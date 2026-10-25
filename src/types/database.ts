@@ -173,6 +173,8 @@ export type Database = {
           import_batch_id: string | null;
           created_at: string;
           updated_at: string;
+          assigned_by: string | null;
+          assigned_at: string | null;
         };
         Insert: {
           id?: string;
@@ -193,6 +195,8 @@ export type Database = {
           import_batch_id?: string | null;
           created_at?: string;
           updated_at?: string;
+          assigned_by?: string | null;
+          assigned_at?: string | null;
         };
         Update: {
           id?: string;
@@ -213,6 +217,8 @@ export type Database = {
           import_batch_id?: string | null;
           created_at?: string;
           updated_at?: string;
+          assigned_by?: string | null;
+          assigned_at?: string | null;
         };
         Relationships: [];
       };
@@ -440,6 +446,23 @@ export type Database = {
       };
     };
     Views: {
+      assignee_workload: {
+        Row: {
+          user_id: string | null;
+          full_name: string | null;
+          role: Database["public"]["Enums"]["user_role"] | null;
+          designation: string | null;
+          position: string | null;
+          dedicated_work: string | null;
+          manager_id: string | null;
+          open_leads: number | null;
+          ongoing_leads: number | null;
+          confirmed_this_month: number | null;
+          performance_pct: number | null;
+          tasks_pending: number | null;
+        };
+        Relationships: [];
+      };
       member_stats: {
         Row: {
           user_id: string | null;
@@ -489,17 +512,30 @@ export type Database = {
         Relationships: [];
       };
     };
-    Functions: Record<string, never>;
+    Functions: {
+      in_my_tree: {
+        Args: { target: string };
+        Returns: boolean;
+      };
+      my_tree_ids: {
+        Args: Record<PropertyKey, never>;
+        Returns: string[];
+      };
+      is_admin: {
+        Args: Record<PropertyKey, never>;
+        Returns: boolean;
+      };
+      is_owner: {
+        Args: Record<PropertyKey, never>;
+        Returns: boolean;
+      };
+    };
     Enums: {
       user_role: "owner" | "manager" | "employee" | "intern";
       lead_kind: "product" | "service";
       lead_frequency: "daily" | "weekly";
       lead_status:
-        | "upcoming"
-        | "pending"
-        | "ongoing"
-        | "confirmed"
-        | "cancelled";
+        "upcoming" | "pending" | "ongoing" | "confirmed" | "cancelled";
       task_type: "daily" | "weekly" | "one_time";
       task_status: "todo" | "in_progress" | "completed" | "cancelled";
       payment_status: "pending" | "partial" | "paid";
@@ -513,10 +549,10 @@ export type Tables<
   PublicTableNameOrOptions extends
     | keyof (Database["public"]["Tables"] & Database["public"]["Views"])
     | { schema: keyof Database },
-  TableName extends PublicTableNameOrOptions extends { schema: keyof Database }
+  TableName extends (PublicTableNameOrOptions extends { schema: keyof Database }
     ? keyof (Database[PublicTableNameOrOptions["schema"]]["Tables"] &
         Database[PublicTableNameOrOptions["schema"]]["Views"])
-    : never = never,
+    : never) = never,
 > = PublicTableNameOrOptions extends { schema: keyof Database }
   ? (Database[PublicTableNameOrOptions["schema"]]["Tables"] &
       Database[PublicTableNameOrOptions["schema"]]["Views"])[TableName] extends {
@@ -536,11 +572,10 @@ export type Tables<
 
 export type TablesInsert<
   PublicTableNameOrOptions extends
-    | keyof Database["public"]["Tables"]
-    | { schema: keyof Database },
-  TableName extends PublicTableNameOrOptions extends { schema: keyof Database }
+    keyof Database["public"]["Tables"] | { schema: keyof Database },
+  TableName extends (PublicTableNameOrOptions extends { schema: keyof Database }
     ? keyof Database[PublicTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = PublicTableNameOrOptions extends { schema: keyof Database }
   ? Database[PublicTableNameOrOptions["schema"]]["Tables"][TableName] extends {
       Insert: infer I;
@@ -557,11 +592,10 @@ export type TablesInsert<
 
 export type TablesUpdate<
   PublicTableNameOrOptions extends
-    | keyof Database["public"]["Tables"]
-    | { schema: keyof Database },
-  TableName extends PublicTableNameOrOptions extends { schema: keyof Database }
+    keyof Database["public"]["Tables"] | { schema: keyof Database },
+  TableName extends (PublicTableNameOrOptions extends { schema: keyof Database }
     ? keyof Database[PublicTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = PublicTableNameOrOptions extends { schema: keyof Database }
   ? Database[PublicTableNameOrOptions["schema"]]["Tables"][TableName] extends {
       Update: infer U;
@@ -578,11 +612,10 @@ export type TablesUpdate<
 
 export type Enums<
   PublicEnumNameOrOptions extends
-    | keyof Database["public"]["Enums"]
-    | { schema: keyof Database },
-  EnumName extends PublicEnumNameOrOptions extends { schema: keyof Database }
+    keyof Database["public"]["Enums"] | { schema: keyof Database },
+  EnumName extends (PublicEnumNameOrOptions extends { schema: keyof Database }
     ? keyof Database[PublicEnumNameOrOptions["schema"]]["Enums"]
-    : never = never,
+    : never) = never,
 > = PublicEnumNameOrOptions extends { schema: keyof Database }
   ? Database[PublicEnumNameOrOptions["schema"]]["Enums"][EnumName]
   : PublicEnumNameOrOptions extends keyof Database["public"]["Enums"]
@@ -592,8 +625,7 @@ export type Enums<
 export type Profile = Database["public"]["Tables"]["profiles"]["Row"];
 export type Task = Database["public"]["Tables"]["tasks"]["Row"];
 export type Lead = Database["public"]["Tables"]["leads"]["Row"];
-export type LeadActivity =
-  Database["public"]["Tables"]["lead_activity"]["Row"];
+export type LeadActivity = Database["public"]["Tables"]["lead_activity"]["Row"];
 export type LeadImportBatch =
   Database["public"]["Tables"]["lead_import_batches"]["Row"];
 export type Sale = Database["public"]["Tables"]["sales"]["Row"];
@@ -601,8 +633,13 @@ export type Payment = Database["public"]["Tables"]["payments"]["Row"];
 export type Incentive = Database["public"]["Tables"]["incentives"]["Row"];
 export type Target = Database["public"]["Tables"]["targets"]["Row"];
 export type SalaryConfig = Database["public"]["Tables"]["salary_config"]["Row"];
-export type SalaryPayout = Database["public"]["Tables"]["salary_payouts"]["Row"];
+export type SalaryPayout =
+  Database["public"]["Tables"]["salary_payouts"]["Row"];
 export type Notification = Database["public"]["Tables"]["notifications"]["Row"];
+export type AssigneeWorkload =
+  Database["public"]["Views"]["assignee_workload"]["Row"];
 export type MemberStats = Database["public"]["Views"]["member_stats"]["Row"];
-export type TargetProgress = Database["public"]["Views"]["target_progress"]["Row"];
-export type SalaryMonthly = Database["public"]["Views"]["salary_monthly"]["Row"];
+export type TargetProgress =
+  Database["public"]["Views"]["target_progress"]["Row"];
+export type SalaryMonthly =
+  Database["public"]["Views"]["salary_monthly"]["Row"];

@@ -2,12 +2,7 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
-import {
-  Download,
-  FileSpreadsheet,
-  Loader2,
-  Upload,
-} from "lucide-react";
+import { Download, FileSpreadsheet, Loader2, Upload } from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
@@ -241,10 +236,15 @@ export function LeadImportDialog({
         .single();
       if (batchError) throw batchError;
 
+      const assignedAt = new Date().toISOString();
       const payload = validRows.map(({ data, assignedToId }) => ({
         ...data,
         assigned_to:
-          canAssign && assignedToId ? assignedToId : assignedTo || currentUserId,
+          canAssign && assignedToId
+            ? assignedToId
+            : assignedTo || currentUserId,
+        assigned_by: canAssign ? currentUserId : null,
+        assigned_at: canAssign ? assignedAt : null,
         created_by: currentUserId,
         import_batch_id: batch.id,
       }));
@@ -411,9 +411,7 @@ export function LeadImportDialog({
                               : "text-brand-green"
                           }`}
                         >
-                          {row.errors.length
-                            ? row.errors.join(", ")
-                            : "Ready"}
+                          {row.errors.length ? row.errors.join(", ") : "Ready"}
                         </td>
                       </tr>
                     ))}

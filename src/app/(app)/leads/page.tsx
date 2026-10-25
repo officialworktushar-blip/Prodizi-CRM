@@ -21,6 +21,7 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
 
+import { LeadAssignDialog } from "@/components/leads/lead-assign-dialog";
 import { LeadConfirmDialog } from "@/components/leads/lead-confirm-dialog";
 import { LeadDialog } from "@/components/leads/lead-dialog";
 import { LeadImportDialog } from "@/components/leads/lead-import-dialog";
@@ -68,6 +69,7 @@ import {
 } from "@/components/ui/table";
 import { useNow } from "@/hooks/use-now";
 import { useRole } from "@/hooks/use-role";
+import { useTeamTree } from "@/hooks/use-team-tree";
 import {
   LEAD_FREQUENCIES,
   LEAD_FREQUENCY_LABELS,
@@ -82,24 +84,25 @@ import {
 } from "@/lib/constants";
 import { canEditLead, isAdminRole } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/client";
-import {
-  formatDate,
-  formatINR,
-  getInitials,
-  todayISO,
-} from "@/lib/utils";
-import type { Lead, Profile } from "@/types/database";
+import { getFlatDownline } from "@/lib/team-hierarchy";
+import { formatDate, formatINR, getInitials, todayISO } from "@/lib/utils";
+import type { Lead } from "@/types/database";
 
 export default function LeadsPage() {
   const { profile, role, loading: roleLoading, error: roleError } = useRole();
+  const { members, assignableMembers, loading: treeLoading } = useTeamTree();
   const isAdmin = isAdminRole(role);
   const queryClient = useQueryClient();
   const [statusFilter, setStatusFilter] = useState<"all" | LeadStatus>("all");
-  const [kindFilter, setKindFilter] = useState<"all" | LeadKind>("all");
-  const [frequencyFilter, setFrequencyFilter] = useState<
-    "all" | LeadFrequency
+  const [assignmentFilter, setAssignmentFilter] = useState<
+    "all" | "unassigned"
   >("all");
+  const [kindFilter, setKindFilter] = useState<"all" | LeadKind>("all");
+  const [frequencyFilter, setFrequencyFilter] = useState<"all" | LeadFrequency>(
+    "all",
+  );
   const [assigneeFilter, setAssigneeFilter] = useState("all");
+  const [assignedByFilter, setAssignedByFilter] = useState("all");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [view, setView] = useState<"table" | "kanban" | "upcoming">("table");
@@ -110,7 +113,7 @@ export default function LeadsPage() {
   const [deleteTarget, setDeleteTarget] = useState<Lead | null>(null);
   const [confirmTarget, setConfirmTarget] = useState<Lead | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [bulkAssignee, setBulkAssignee] = useState("");
+  const [assignTargets, setAssignTargets] = useState<Lead[] | null>(null);
   const now = useNow();
   const today = now ? todayISO(now) : "";
 
@@ -132,21 +135,6 @@ export default function LeadsPage() {
         .limit(1000);
       if (error) throw error;
       return (data ?? []) as Lead[];
-    },
-  });
-
-  const profilesQuery = useQuery({
-    queryKey: ["profiles", "lead-assignees"],
-    enabled: Boolean(profile?.id),
-    queryFn: async () => {
-      const supabase = createClient();
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("is_active", true)
-        .order("full_name");
-      if (error) throw error;
-      return (data ?? []) as Profile[];
     },
   });
 
@@ -186,36 +174,6 @@ export default function LeadsPage() {
     },
   });
 
-  const bulkAssignMutation = useMutation({
-    mutationFn: async ({
-      ids,
-      assignedTo,
-    }: {
-      ids: string[];
-      assignedTo: string;
-    }) => {
-      const supabase = createClient();
-      const { error } = await supabase
-        .from("leads")
-        .update({ assigned_to: assignedTo })
-        .in("id", ids);
-      if (error) throw error;
-    },
-    onSuccess: (_data, variables) => {
-      toast.success(
-        `${variables.ids.length} lead${variables.ids.length === 1 ? "" : "s"} assigned`,
-      );
-      setSelectedIds([]);
-      setBulkAssignee("");
-      void queryClient.invalidateQueries({ queryKey: ["leads"] });
-      void queryClient.invalidateQueries({ queryKey: ["tasks"] });
-      void queryClient.invalidateQueries({ queryKey: ["notifications"] });
-    },
-    onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Assignment failed");
-    },
-  });
-
   const handleStatusChange = (lead: Lead, status: LeadStatus) => {
     if (status === "confirmed" && lead.status !== "confirmed") {
       setConfirmTarget(lead);
@@ -241,10 +199,10 @@ export default function LeadsPage() {
     },
   });
 
-  const profiles = useMemo(
-    () => profilesQuery.data ?? [],
-    [profilesQuery.data],
-  );
+  const profiles = useMemo(() => {
+    if (members.length > 0) return members;
+    return profile ? [profile] : [];
+  }, [members, profile]);
   const profileMap = useMemo(
     () => new Map(profiles.map((item) => [item.id, item])),
     [profiles],
@@ -259,16 +217,27 @@ export default function LeadsPage() {
     return leads.filter((lead) => {
       if (statusFilter !== "all" && lead.status !== statusFilter) return false;
       if (kindFilter !== "all" && lead.kind !== kindFilter) return false;
-      if (
-        frequencyFilter !== "all" &&
-        lead.frequency !== frequencyFilter
-      ) {
+      if (frequencyFilter !== "all" && lead.frequency !== frequencyFilter) {
         return false;
+      }
+      if (isAdmin && assignmentFilter === "unassigned" && lead.assigned_to) {
+        return false;
+      }
+      if (isAdmin && assigneeFilter !== "all" && assigneeFilter !== "team") {
+        const scopedIds = new Set([
+          assigneeFilter,
+          ...getFlatDownline(profiles, assigneeFilter).map(
+            (member) => member.id,
+          ),
+        ]);
+        if (!lead.assigned_to || !scopedIds.has(lead.assigned_to)) {
+          return false;
+        }
       }
       if (
         isAdmin &&
-        assigneeFilter !== "all" &&
-        lead.assigned_to !== assigneeFilter
+        assignedByFilter !== "all" &&
+        lead.assigned_by !== assignedByFilter
       ) {
         return false;
       }
@@ -300,14 +269,17 @@ export default function LeadsPage() {
   }, [
     leads,
     statusFilter,
+    assignmentFilter,
     kindFilter,
     frequencyFilter,
     assigneeFilter,
+    assignedByFilter,
     fromDate,
     toDate,
     view,
     search,
     isAdmin,
+    profiles,
     now,
     today,
   ]);
@@ -315,6 +287,7 @@ export default function LeadsPage() {
   const counts = useMemo(
     () => ({
       all: leads.length,
+      unassigned: leads.filter((lead) => !lead.assigned_to).length,
       upcoming: leads.filter((lead) => lead.status === "upcoming").length,
       pending: leads.filter((lead) => lead.status === "pending").length,
       ongoing: leads.filter((lead) => lead.status === "ongoing").length,
@@ -325,13 +298,14 @@ export default function LeadsPage() {
   );
 
   const pipelineValue = filteredLeads
-    .filter((lead) => lead.status !== "cancelled" && lead.status !== "confirmed")
+    .filter(
+      (lead) => lead.status !== "cancelled" && lead.status !== "confirmed",
+    )
     .reduce((sum, lead) => sum + Number(lead.expected_value ?? 0), 0);
 
   const selectedLeads = filteredLeads.filter((lead) =>
     selectedIds.includes(lead.id),
   );
-  const selectedVisibleIds = selectedLeads.map((lead) => lead.id);
   const allVisibleSelected =
     filteredLeads.length > 0 &&
     filteredLeads.every((lead) => selectedIds.includes(lead.id));
@@ -383,7 +357,7 @@ export default function LeadsPage() {
     XLSX.writeFile(workbook, `leads-${todayISO()}.xlsx`);
   };
 
-  if (roleLoading) {
+  if (roleLoading || treeLoading) {
     return (
       <div className="space-y-4">
         <Skeleton className="h-10 w-64" />
@@ -419,10 +393,7 @@ export default function LeadsPage() {
         eyebrow="Pipeline"
         actions={
           <>
-            <Button
-              variant="outline"
-              onClick={() => setImportOpen(true)}
-            >
+            <Button variant="outline" onClick={() => setImportOpen(true)}>
               <Upload className="size-4" />
               Import
             </Button>
@@ -440,16 +411,50 @@ export default function LeadsPage() {
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap gap-2">
+          <Button
+            size="sm"
+            variant={assignmentFilter === "unassigned" ? "default" : "outline"}
+            className={
+              assignmentFilter === "unassigned"
+                ? ""
+                : "border-brand-orange/40 text-brand-orange"
+            }
+            onClick={() => {
+              setAssignmentFilter("unassigned");
+              setStatusFilter("all");
+            }}
+          >
+            Unassigned
+            <Badge
+              variant={
+                assignmentFilter === "unassigned" ? "secondary" : "outline"
+              }
+              className="ml-1 px-1.5"
+            >
+              {counts.unassigned}
+            </Badge>
+          </Button>
           {(["all", ...LEAD_STATUSES] as const).map((status) => (
             <Button
               key={status}
               size="sm"
-              variant={statusFilter === status ? "default" : "outline"}
-              onClick={() => setStatusFilter(status)}
+              variant={
+                statusFilter === status && assignmentFilter === "all"
+                  ? "default"
+                  : "outline"
+              }
+              onClick={() => {
+                setAssignmentFilter("all");
+                setStatusFilter(status);
+              }}
             >
               {status === "all" ? "All leads" : LEAD_STATUS_LABELS[status]}
               <Badge
-                variant={statusFilter === status ? "secondary" : "outline"}
+                variant={
+                  statusFilter === status && assignmentFilter === "all"
+                    ? "secondary"
+                    : "outline"
+                }
                 className="ml-1 px-1.5"
               >
                 {counts[status]}
@@ -534,22 +539,41 @@ export default function LeadsPage() {
               </SelectContent>
             </Select>
             {isAdmin ? (
-              <Select
-                value={assigneeFilter}
-                onValueChange={setAssigneeFilter}
-              >
-                <SelectTrigger className="w-full sm:w-[190px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All members</SelectItem>
-                  {profiles.map((member) => (
-                    <SelectItem key={member.id} value={member.id}>
-                      {member.full_name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <>
+                <Select
+                  value={assigneeFilter}
+                  onValueChange={setAssigneeFilter}
+                >
+                  <SelectTrigger className="w-full sm:w-[190px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All members</SelectItem>
+                    <SelectItem value="team">My whole team</SelectItem>
+                    {profiles.map((member) => (
+                      <SelectItem key={member.id} value={member.id}>
+                        {member.full_name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={assignedByFilter}
+                  onValueChange={setAssignedByFilter}
+                >
+                  <SelectTrigger className="w-full sm:w-[180px]">
+                    <SelectValue placeholder="Assigned by" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Assigned by anyone</SelectItem>
+                    {profiles.map((member) => (
+                      <SelectItem key={member.id} value={member.id}>
+                        {member.full_name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </>
             ) : null}
             <div className="flex items-center gap-2 rounded-lg border px-2 py-1">
               <span className="shrink-0 text-xs text-muted-foreground">
@@ -579,30 +603,9 @@ export default function LeadsPage() {
                 {selectedLeads.length} lead
                 {selectedLeads.length === 1 ? "" : "s"} selected
               </p>
-              <Select value={bulkAssignee} onValueChange={setBulkAssignee}>
-                <SelectTrigger className="w-full sm:w-[200px]">
-                  <SelectValue placeholder="Assign to member" />
-                </SelectTrigger>
-                <SelectContent>
-                  {profiles.map((member) => (
-                    <SelectItem key={member.id} value={member.id}>
-                      {member.full_name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Button
-                size="sm"
-                disabled={!bulkAssignee || bulkAssignMutation.isPending}
-                onClick={() =>
-                  bulkAssignMutation.mutate({
-                    ids: selectedVisibleIds,
-                    assignedTo: bulkAssignee,
-                  })
-                }
-              >
+              <Button size="sm" onClick={() => setAssignTargets(selectedLeads)}>
                 <UserCheck className="size-4" />
-                Assign
+                Assign selected
               </Button>
               <Button
                 size="sm"
@@ -621,7 +624,9 @@ export default function LeadsPage() {
             </p>
             <p className="font-medium">
               Open pipeline:{" "}
-              <span className="text-brand-blue">{formatINR(pipelineValue)}</span>
+              <span className="text-brand-blue">
+                {formatINR(pipelineValue)}
+              </span>
             </p>
           </div>
 
@@ -713,9 +718,8 @@ export default function LeadsPage() {
                               </div>
                               <div className="mt-2 flex items-center justify-between text-xs">
                                 <Badge variant="secondary">
-                                  {LEAD_KIND_LABELS[
-                                    lead.kind as LeadKind
-                                  ] ?? lead.kind}
+                                  {LEAD_KIND_LABELS[lead.kind as LeadKind] ??
+                                    lead.kind}
                                 </Badge>
                                 <span className="font-medium">
                                   {formatINR(lead.expected_value)}
@@ -794,6 +798,9 @@ export default function LeadsPage() {
                     const owner =
                       profileMap.get(lead.assigned_to ?? "") ??
                       (lead.assigned_to === profile.id ? profile : undefined);
+                    const assignedBy =
+                      profileMap.get(lead.assigned_by ?? "") ??
+                      (lead.assigned_by === profile.id ? profile : undefined);
                     const canEdit = canEditLead(role, profile.id, lead);
                     const followUpOverdue =
                       today &&
@@ -850,27 +857,39 @@ export default function LeadsPage() {
                             {lead.item_name || "—"}
                           </p>
                         </TableCell>
-                        <TableCell className="whitespace-nowrap text-sm">
+                        <TableCell className="text-sm whitespace-nowrap">
                           {formatINR(lead.expected_value)}
                         </TableCell>
                         <TableCell>
-                          <div className="flex items-center gap-2">
-                            <Avatar className="size-7">
-                              <AvatarFallback className="bg-brand-gradient text-[0.65rem] text-white">
-                                {getInitials(owner?.full_name)}
-                              </AvatarFallback>
-                            </Avatar>
-                            <div>
-                              <p className="max-w-[120px] truncate text-sm">
-                                {owner?.full_name ?? "Unassigned"}
-                              </p>
-                              <p className="text-xs text-muted-foreground">
-                                {owner?.role
-                                  ? ROLE_LABELS[owner.role]
-                                  : ""}
-                              </p>
+                          {owner ? (
+                            <div className="flex items-center gap-2">
+                              <Avatar className="size-7">
+                                <AvatarFallback className="bg-brand-gradient text-[0.65rem] text-white">
+                                  {getInitials(owner.full_name)}
+                                </AvatarFallback>
+                              </Avatar>
+                              <div>
+                                <p className="max-w-[140px] truncate text-sm">
+                                  {owner.full_name}
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                  {ROLE_LABELS[owner.role]}
+                                </p>
+                                {assignedBy ? (
+                                  <p className="mt-0.5 max-w-[180px] truncate text-[0.65rem] text-muted-foreground">
+                                    Assigned by {assignedBy.full_name}
+                                    {lead.assigned_at
+                                      ? ` · ${formatDate(lead.assigned_at)}`
+                                      : ""}
+                                  </p>
+                                ) : null}
+                              </div>
                             </div>
-                          </div>
+                          ) : (
+                            <Badge className="border-brand-orange/30 bg-brand-orange/10 text-brand-orange">
+                              Unassigned
+                            </Badge>
+                          )}
                         </TableCell>
                         <TableCell>
                           <span
@@ -917,7 +936,9 @@ export default function LeadsPage() {
                                 size="icon-sm"
                                 aria-label="Lead actions"
                               >
-                                <span className="text-lg leading-none">···</span>
+                                <span className="text-lg leading-none">
+                                  ···
+                                </span>
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
@@ -930,6 +951,14 @@ export default function LeadsPage() {
                               >
                                 Edit lead
                               </DropdownMenuItem>
+                              {isAdmin ? (
+                                <DropdownMenuItem
+                                  onClick={() => setAssignTargets([lead])}
+                                >
+                                  <UserCheck className="size-4" />
+                                  {lead.assigned_to ? "Reassign" : "Assign"}
+                                </DropdownMenuItem>
+                              ) : null}
                               {isAdmin ? (
                                 <DropdownMenuItem
                                   variant="destructive"
@@ -951,6 +980,22 @@ export default function LeadsPage() {
           )}
         </CardContent>
       </Card>
+
+      {assignTargets && assignTargets.length > 0 ? (
+        <LeadAssignDialog
+          key={`assign-${assignTargets.map((lead) => lead.id).join("-")}`}
+          open
+          onOpenChange={(open) => {
+            if (!open) {
+              setAssignTargets(null);
+              setSelectedIds([]);
+            }
+          }}
+          leads={assignTargets}
+          members={assignableMembers}
+          currentUserId={profile.id}
+        />
+      ) : null}
 
       <LeadDialog
         key={`${dialogOpen ? (editingLead?.id ?? "new") : "closed"}`}

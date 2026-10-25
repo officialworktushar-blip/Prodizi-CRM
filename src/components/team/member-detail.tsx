@@ -5,8 +5,10 @@ import {
   ArrowLeft,
   BriefcaseBusiness,
   CalendarDays,
+  ChevronRight,
   IndianRupee,
   Mail,
+  Network,
   Phone,
   ShieldCheck,
   Target,
@@ -39,6 +41,11 @@ import { ROLE_LABELS } from "@/lib/constants";
 import { canManageMember, isAdminRole } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/client";
 import {
+  getDirectReports,
+  getReportingChain,
+  isInDownline,
+} from "@/lib/team-hierarchy";
+import {
   formatDate,
   formatINR,
   formatPercent,
@@ -59,7 +66,7 @@ import type {
 } from "@/types/database";
 
 export function MemberDetail({ memberId }: { memberId: string }) {
-  const { role, loading: roleLoading } = useRole();
+  const { profile, role, loading: roleLoading } = useRole();
   const isAdmin = isAdminRole(role);
   const [dialogOpen, setDialogOpen] = useState(false);
   const now = useNow();
@@ -84,56 +91,65 @@ export function MemberDetail({ memberId }: { memberId: string }) {
     enabled: Boolean(memberQuery.data) && Boolean(month),
     queryFn: async () => {
       const supabase = createClient();
-      const [stats, tasks, leads, config, salary, sales, incentives, target, profiles] =
-        await Promise.all([
-          supabase
-            .from("member_stats")
-            .select("*")
-            .eq("user_id", memberId)
-            .maybeSingle(),
-          supabase
-            .from("tasks")
-            .select("*")
-            .eq("assigned_to", memberId)
-            .order("created_at", { ascending: false })
-            .limit(200),
-          supabase
-            .from("leads")
-            .select("*")
-            .eq("assigned_to", memberId)
-            .order("created_at", { ascending: false })
-            .limit(10),
-          supabase
-            .from("salary_config")
-            .select("*")
-            .eq("user_id", memberId)
-            .maybeSingle(),
-          supabase
-            .from("salary_monthly")
-            .select("*")
-            .eq("user_id", memberId)
-            .eq("month", month)
-            .maybeSingle(),
-          supabase
-            .from("sales")
-            .select("*")
-            .eq("sold_by", memberId)
-            .order("sale_date", { ascending: false })
-            .limit(10),
-          supabase
-            .from("incentives")
-            .select("*")
-            .eq("user_id", memberId)
-            .order("created_at", { ascending: false })
-            .limit(10),
-          supabase
-            .from("targets")
-            .select("*")
-            .eq("user_id", memberId)
-            .eq("month", month)
-            .maybeSingle(),
-          supabase.from("profiles").select("*").order("full_name"),
-        ]);
+      const [
+        stats,
+        tasks,
+        leads,
+        config,
+        salary,
+        sales,
+        incentives,
+        target,
+        profiles,
+      ] = await Promise.all([
+        supabase
+          .from("member_stats")
+          .select("*")
+          .eq("user_id", memberId)
+          .maybeSingle(),
+        supabase
+          .from("tasks")
+          .select("*")
+          .eq("assigned_to", memberId)
+          .order("created_at", { ascending: false })
+          .limit(200),
+        supabase
+          .from("leads")
+          .select("*")
+          .eq("assigned_to", memberId)
+          .order("created_at", { ascending: false })
+          .limit(10),
+        supabase
+          .from("salary_config")
+          .select("*")
+          .eq("user_id", memberId)
+          .maybeSingle(),
+        supabase
+          .from("salary_monthly")
+          .select("*")
+          .eq("user_id", memberId)
+          .eq("month", month)
+          .maybeSingle(),
+        supabase
+          .from("sales")
+          .select("*")
+          .eq("sold_by", memberId)
+          .order("sale_date", { ascending: false })
+          .limit(10),
+        supabase
+          .from("incentives")
+          .select("*")
+          .eq("user_id", memberId)
+          .order("created_at", { ascending: false })
+          .limit(10),
+        supabase
+          .from("targets")
+          .select("*")
+          .eq("user_id", memberId)
+          .eq("month", month)
+          .maybeSingle(),
+        supabase.from("profiles").select("*").order("full_name"),
+      ]);
       const error =
         stats.error ??
         tasks.error ??
@@ -194,8 +210,16 @@ export function MemberDetail({ memberId }: { memberId: string }) {
   }
 
   const member = memberQuery.data;
-  const canView = isAdmin && (role === "owner" || canManageMember(role, member.role));
-  if (!canView) {
+  const actor = profile;
+  const relatedProfiles = relatedQuery.data?.profiles ?? [];
+  const canView = Boolean(
+    isAdmin &&
+    actor &&
+    (role === "owner" ||
+      member.id === actor.id ||
+      isInDownline(relatedProfiles, actor.id, member.id)),
+  );
+  if (!canView || !actor) {
     return (
       <EmptyState
         icon={ShieldCheck}
@@ -218,8 +242,11 @@ export function MemberDetail({ memberId }: { memberId: string }) {
   const sales = relatedQuery.data?.sales ?? [];
   const incentives = relatedQuery.data?.incentives ?? [];
   const target = relatedQuery.data?.target ?? null;
-  const profiles = relatedQuery.data?.profiles ?? [];
-  const manager = profiles.find((item) => item.id === member.manager_id);
+  const profiles = relatedProfiles;
+  const reportingChain = getReportingChain(profiles, member.id);
+  const manager = reportingChain[0] ?? null;
+  const directReports = getDirectReports(profiles, member.id);
+  const breadcrumb = [...reportingChain].reverse();
   const showSalary = role === "owner" || role === "manager";
   const monthKeys = Array.from({ length: 6 }).map((_, index) => {
     const date = new Date(now);
@@ -232,8 +259,7 @@ export function MemberDetail({ memberId }: { memberId: string }) {
   const chartData = monthKeys.map((item) => ({
     ...item,
     completed: tasks.filter(
-      (task) =>
-        task.completed_at && task.completed_at.slice(0, 7) === item.key,
+      (task) => task.completed_at && task.completed_at.slice(0, 7) === item.key,
     ).length,
   }));
   const chartMax = Math.max(1, ...chartData.map((item) => item.completed));
@@ -266,6 +292,24 @@ export function MemberDetail({ memberId }: { memberId: string }) {
           </>
         }
       />
+
+      <nav
+        aria-label="Reporting chain"
+        className="flex flex-wrap items-center gap-1 text-sm text-muted-foreground"
+      >
+        {breadcrumb.map((person) => (
+          <span key={person.id} className="flex items-center gap-1">
+            <Link
+              href={`/team/${person.id}`}
+              className="hover:text-foreground hover:underline"
+            >
+              {person.full_name}
+            </Link>
+            <ChevronRight className="size-3.5" />
+          </span>
+        ))}
+        <span className="font-medium text-foreground">{member.full_name}</span>
+      </nav>
 
       <Card>
         <CardContent className="flex flex-col gap-4 sm:flex-row sm:items-center">
@@ -381,7 +425,9 @@ export function MemberDetail({ memberId }: { memberId: string }) {
         <Card>
           <CardHeader>
             <CardTitle>Recent tasks</CardTitle>
-            <CardDescription>Latest work assigned to this member.</CardDescription>
+            <CardDescription>
+              Latest work assigned to this member.
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
             {tasks.length === 0 ? (
@@ -397,7 +443,9 @@ export function MemberDetail({ memberId }: { memberId: string }) {
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium">{task.title}</p>
                     <p className="text-xs text-muted-foreground">
-                      {task.due_date ? formatDate(task.due_date) : "No due date"}
+                      {task.due_date
+                        ? formatDate(task.due_date)
+                        : "No due date"}
                     </p>
                   </div>
                   <StatusBadge status={task.status} />
@@ -525,9 +573,7 @@ export function MemberDetail({ memberId }: { memberId: string }) {
           <CardContent className="grid gap-4 text-sm sm:grid-cols-2">
             <div>
               <p className="text-xs text-muted-foreground">Designation</p>
-              <p className="mt-0.5 font-medium">
-                {member.designation ?? "—"}
-              </p>
+              <p className="mt-0.5 font-medium">{member.designation ?? "—"}</p>
             </div>
             <div>
               <p className="text-xs text-muted-foreground">Position</p>
@@ -540,16 +586,57 @@ export function MemberDetail({ memberId }: { memberId: string }) {
               </p>
             </div>
             <div>
-              <p className="text-xs text-muted-foreground">Reporting manager</p>
-              <p className="mt-0.5 font-medium">
-                {manager?.full_name ?? "Not assigned"}
-              </p>
+              <p className="text-xs text-muted-foreground">Reports to</p>
+              {manager ? (
+                <Link
+                  href={`/team/${manager.id}`}
+                  className="mt-0.5 inline-flex items-center gap-1 font-medium hover:underline"
+                >
+                  {manager.full_name}
+                  <ChevronRight className="size-3.5" />
+                </Link>
+              ) : (
+                <p className="mt-0.5 font-medium">
+                  {member.role === "owner" ? "Top of hierarchy" : "Unplaced"}
+                </p>
+              )}
             </div>
             <div>
               <p className="text-xs text-muted-foreground">Monthly target</p>
               <p className="mt-0.5 font-medium">
                 {formatINR(target?.target_amount ?? salary?.target_amount)}
               </p>
+            </div>
+            <div className="sm:col-span-2">
+              <p className="mb-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Network className="size-3.5" />
+                Direct reports ({directReports.length})
+              </p>
+              {directReports.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No direct reports.
+                </p>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {directReports.map((report) => (
+                    <Link
+                      key={report.id}
+                      href={`/team/${report.id}`}
+                      className="flex items-center gap-2 rounded-lg border bg-card px-3 py-1.5 text-sm hover:bg-muted/50"
+                    >
+                      <Avatar className="size-6">
+                        <AvatarFallback className="text-[0.6rem]">
+                          {getInitials(report.full_name)}
+                        </AvatarFallback>
+                      </Avatar>
+                      <span>{report.full_name}</span>
+                      <Badge variant="outline">
+                        {ROLE_LABELS[report.role]}
+                      </Badge>
+                    </Link>
+                  ))}
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -611,7 +698,8 @@ export function MemberDetail({ memberId }: { memberId: string }) {
           member={member}
           salaryConfig={config}
           monthlyTarget={target?.target_amount ?? null}
-          managers={profiles}
+          profiles={profiles}
+          actorId={actor.id}
           actorRole={role ?? "employee"}
         />
       ) : null}

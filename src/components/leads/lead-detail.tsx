@@ -11,11 +11,13 @@ import {
   Plus,
   StickyNote,
   Target,
+  UserCheck,
 } from "lucide-react";
 import Link from "next/link";
 import { useState, type FormEvent } from "react";
 import { toast } from "sonner";
 
+import { LeadAssignDialog } from "@/components/leads/lead-assign-dialog";
 import { LeadConfirmDialog } from "@/components/leads/lead-confirm-dialog";
 import { LeadDialog } from "@/components/leads/lead-dialog";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -42,6 +44,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { useRole } from "@/hooks/use-role";
+import { useTeamTree } from "@/hooks/use-team-tree";
 import {
   LEAD_FREQUENCY_LABELS,
   LEAD_KIND_LABELS,
@@ -60,19 +63,15 @@ import {
   formatRelative,
   getInitials,
 } from "@/lib/utils";
-import type {
-  Lead,
-  LeadActivity,
-  Profile,
-  Sale,
-  Task,
-} from "@/types/database";
+import type { Lead, LeadActivity, Profile, Sale, Task } from "@/types/database";
 
 export function LeadDetail({ leadId }: { leadId: string }) {
   const { profile, role, loading: roleLoading } = useRole();
+  const { assignableMembers } = useTeamTree();
   const queryClient = useQueryClient();
   const isAdmin = isAdminRole(role);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [assignOpen, setAssignOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [note, setNote] = useState("");
 
@@ -175,7 +174,9 @@ export function LeadDetail({ leadId }: { leadId: string }) {
       });
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Could not add note");
+      toast.error(
+        error instanceof Error ? error.message : "Could not add note",
+      );
     },
   });
 
@@ -222,6 +223,9 @@ export function LeadDetail({ leadId }: { leadId: string }) {
   const owner =
     profileMap.get(lead.assigned_to ?? "") ??
     (lead.assigned_to === profile?.id ? profile : undefined);
+  const assignedBy =
+    profileMap.get(lead.assigned_by ?? "") ??
+    (lead.assigned_by === profile?.id ? profile : undefined);
   const canEdit = profile ? canEditLead(role, profile.id, lead) : false;
 
   const handleStatusChange = (status: LeadStatus) => {
@@ -247,6 +251,12 @@ export function LeadDetail({ leadId }: { leadId: string }) {
                 Back
               </Link>
             </Button>
+            {isAdmin ? (
+              <Button variant="outline" onClick={() => setAssignOpen(true)}>
+                <UserCheck className="size-4" />
+                {lead.assigned_to ? "Reassign" : "Assign"}
+              </Button>
+            ) : null}
             {canEdit ? (
               <Button onClick={() => setDialogOpen(true)}>Edit lead</Button>
             ) : null}
@@ -307,7 +317,9 @@ export function LeadDetail({ leadId }: { leadId: string }) {
           <CardHeader className="flex-row items-start justify-between gap-3">
             <div>
               <CardTitle>Overview</CardTitle>
-              <CardDescription>Contact and opportunity details.</CardDescription>
+              <CardDescription>
+                Contact and opportunity details.
+              </CardDescription>
             </div>
             <div className="flex items-center gap-2">
               <Badge variant="secondary" className="capitalize">
@@ -376,9 +388,8 @@ export function LeadDetail({ leadId }: { leadId: string }) {
                 <p className="flex items-center justify-between gap-3">
                   <span className="text-muted-foreground">Frequency</span>
                   <span className="capitalize">
-                    {LEAD_FREQUENCY_LABELS[
-                      lead.frequency as LeadFrequency
-                    ] ?? lead.frequency}
+                    {LEAD_FREQUENCY_LABELS[lead.frequency as LeadFrequency] ??
+                      lead.frequency}
                   </span>
                 </p>
                 <p className="flex items-center justify-between gap-3">
@@ -433,6 +444,18 @@ export function LeadDetail({ leadId }: { leadId: string }) {
                 </div>
               </div>
               <div className="mt-4 space-y-2 text-xs text-muted-foreground">
+                {lead.assigned_to ? (
+                  <p>
+                    Assigned by {assignedBy?.full_name ?? "system"}
+                    {lead.assigned_at
+                      ? ` on ${formatDate(lead.assigned_at)}`
+                      : ""}
+                  </p>
+                ) : (
+                  <Badge className="border-brand-orange/30 bg-brand-orange/10 text-brand-orange">
+                    Unassigned
+                  </Badge>
+                )}
                 <p className="flex items-center gap-2">
                   <CalendarClock className="size-3.5" />
                   Created {formatDate(lead.created_at)}
@@ -465,7 +488,9 @@ export function LeadDetail({ leadId }: { leadId: string }) {
                         {task.title}
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        {task.due_date ? formatDate(task.due_date) : "No due date"}
+                        {task.due_date
+                          ? formatDate(task.due_date)
+                          : "No due date"}
                       </p>
                     </div>
                     <StatusBadge status={task.status} />
@@ -585,6 +610,16 @@ export function LeadDetail({ leadId }: { leadId: string }) {
           )}
         </CardContent>
       </Card>
+
+      {assignOpen && profile ? (
+        <LeadAssignDialog
+          open={assignOpen}
+          onOpenChange={setAssignOpen}
+          leads={[lead]}
+          members={assignableMembers}
+          currentUserId={profile.id}
+        />
+      ) : null}
 
       {dialogOpen ? (
         <LeadDialog

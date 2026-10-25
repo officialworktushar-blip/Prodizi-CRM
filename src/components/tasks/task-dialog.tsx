@@ -38,6 +38,41 @@ type TaskDialogProps = {
   canAssign: boolean;
 };
 
+function getSaveError(error: unknown) {
+  if (typeof error === "object" && error !== null) {
+    const candidate = error as {
+      message?: unknown;
+      code?: unknown;
+      details?: unknown;
+      hint?: unknown;
+    };
+    const message =
+      typeof candidate.message === "string" && candidate.message
+        ? candidate.message
+        : "Task save failed";
+    const description = [
+      typeof candidate.code === "string" && candidate.code
+        ? `Code: ${candidate.code}`
+        : null,
+      typeof candidate.details === "string" && candidate.details
+        ? candidate.details
+        : null,
+      typeof candidate.hint === "string" && candidate.hint
+        ? candidate.hint
+        : null,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+
+    return { message, description: description || undefined };
+  }
+
+  return {
+    message: typeof error === "string" && error ? error : "Task save failed",
+    description: undefined,
+  };
+}
+
 export function TaskDialog({
   open,
   onOpenChange,
@@ -70,25 +105,37 @@ export function TaskDialog({
         title: title.trim(),
         description: description.trim() || null,
         task_type: taskType,
-        assigned_to: assignedTo,
         lead_id: leadId === "none" ? null : leadId,
         due_date: dueDate || null,
-        ...(canAssign ? { incentive_amount: Number(incentive) || 0 } : {}),
       };
 
       if (task) {
         const { error } = await supabase
           .from("tasks")
-          .update(payload)
+          .update({
+            ...payload,
+            ...(canAssign
+              ? {
+                  assigned_to: assignedTo,
+                  incentive_amount: Number(incentive) || 0,
+                }
+              : {}),
+          })
           .eq("id", task.id);
         if (error) throw error;
         return;
       }
 
-      const { error } = await supabase.from("tasks").insert({
-        ...payload,
-        created_by: currentUserId,
-      });
+      const { error } = await supabase
+        .from("tasks")
+        .insert({
+          ...payload,
+          assigned_to: canAssign ? assignedTo : currentUserId,
+          created_by: currentUserId,
+          incentive_amount: canAssign ? Number(incentive) || 0 : 0,
+        })
+        .select()
+        .single();
       if (error) throw error;
     },
     onSuccess: () => {
@@ -101,7 +148,8 @@ export function TaskDialog({
       onOpenChange(false);
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Task save failed");
+      const { message, description } = getSaveError(error);
+      toast.error(message, { description });
     },
   });
 

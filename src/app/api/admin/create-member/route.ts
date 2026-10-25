@@ -4,31 +4,34 @@ import { z } from "zod";
 import { createAdminClient, createClient } from "@/lib/supabase/server";
 import { monthStartISO } from "@/lib/utils";
 
-const createMemberSchema = z.object({
-  full_name: z.string().trim().min(2, "Name is too short").max(120),
-  email: z.string().trim().email("Enter a valid email"),
-  password: z.string().min(8, "Password must be at least 8 characters"),
-  phone: z.string().trim().max(30).optional().nullable(),
-  role: z.enum(["owner", "manager", "employee", "intern"]),
-  designation: z.string().trim().max(120).optional().nullable(),
-  position: z.string().trim().max(120).optional().nullable(),
-  dedicated_work: z.string().trim().max(240).optional().nullable(),
-  manager_id: z.string().uuid().optional().nullable(),
-  joined_on: z.string().optional().nullable(),
-  base_salary: z.coerce.number().min(0).default(0),
-  sales_incentive_percent: z.coerce.number().min(0).max(100).default(0),
-  monthly_target: z.coerce.number().min(0).default(0),
-}).superRefine((value, ctx) => {
-  if (
-    (value.role === "employee" || value.role === "intern") &&
-    (!value.dedicated_work || !value.position)
-  ) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "Employee and intern roles require position and dedicated work",
-    });
-  }
-});
+const createMemberSchema = z
+  .object({
+    full_name: z.string().trim().min(2, "Name is too short").max(120),
+    email: z.string().trim().email("Enter a valid email"),
+    password: z.string().min(8, "Password must be at least 8 characters"),
+    phone: z.string().trim().max(30).optional().nullable(),
+    role: z.enum(["owner", "manager", "employee", "intern"]),
+    designation: z.string().trim().max(120).optional().nullable(),
+    position: z.string().trim().max(120).optional().nullable(),
+    dedicated_work: z.string().trim().max(240).optional().nullable(),
+    manager_id: z.string().uuid().optional().nullable(),
+    joined_on: z.string().optional().nullable(),
+    base_salary: z.coerce.number().min(0).default(0),
+    sales_incentive_percent: z.coerce.number().min(0).max(100).default(0),
+    monthly_target: z.coerce.number().min(0).default(0),
+  })
+  .superRefine((value, ctx) => {
+    if (
+      (value.role === "employee" || value.role === "intern") &&
+      (!value.dedicated_work || !value.position)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "Employee and intern roles require position and dedicated work",
+      });
+    }
+  });
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -54,7 +57,10 @@ export async function POST(request: Request) {
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Invalid request body" },
+      { status: 400 },
+    );
   }
 
   const parsed = createMemberSchema.safeParse(body);
@@ -66,6 +72,14 @@ export async function POST(request: Request) {
   }
 
   const input = parsed.data;
+  const role = input.role as string;
+  if (role === "owner") {
+    return NextResponse.json(
+      { error: "An owner cannot be created from the team screen" },
+      { status: 403 },
+    );
+  }
+
   if (
     actor.role === "manager" &&
     !["employee", "intern"].includes(input.role)
@@ -77,16 +91,78 @@ export async function POST(request: Request) {
   }
 
   const admin = createAdminClient();
-  const { data: created, error: authError } = await admin.auth.admin.createUser({
-    email: input.email,
-    password: input.password,
-    email_confirm: true,
-    user_metadata: {
-      full_name: input.full_name,
-      role: input.role,
-      phone: input.phone ?? null,
+
+  if (role !== "owner") {
+    if (!input.manager_id) {
+      return NextResponse.json(
+        { error: "Choose who this member reports to" },
+        { status: 400 },
+      );
+    }
+
+    const { data: managerProfile, error: managerError } = await admin
+      .from("profiles")
+      .select("id, role, manager_id, is_active")
+      .eq("id", input.manager_id)
+      .maybeSingle();
+
+    if (managerError) {
+      return NextResponse.json(
+        { error: managerError.message },
+        { status: 400 },
+      );
+    }
+    if (!managerProfile?.is_active) {
+      return NextResponse.json(
+        { error: "The selected reporting manager is not active" },
+        { status: 400 },
+      );
+    }
+
+    const validManagerRoles =
+      input.role === "manager"
+        ? ["owner"]
+        : input.role === "employee"
+          ? ["owner", "manager"]
+          : ["owner", "manager", "employee"];
+
+    if (!validManagerRoles.includes(managerProfile.role)) {
+      return NextResponse.json(
+        {
+          error: `A ${input.role} cannot report to a ${managerProfile.role}`,
+        },
+        { status: 400 },
+      );
+    }
+
+    if (
+      actor.role === "manager" &&
+      managerProfile.id !== actor.id &&
+      managerProfile.role !== "owner" &&
+      managerProfile.manager_id !== actor.id
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Managers can only place new members under themselves or their direct reports",
+        },
+        { status: 403 },
+      );
+    }
+  }
+
+  const { data: created, error: authError } = await admin.auth.admin.createUser(
+    {
+      email: input.email,
+      password: input.password,
+      email_confirm: true,
+      user_metadata: {
+        full_name: input.full_name,
+        role: input.role,
+        phone: input.phone ?? null,
+      },
     },
-  });
+  );
 
   if (authError || !created.user) {
     return NextResponse.json(
@@ -106,18 +182,14 @@ export async function POST(request: Request) {
     designation: input.designation ?? null,
     position: input.position ?? null,
     dedicated_work: input.dedicated_work ?? null,
-    manager_id:
-      actor.role === "owner" ? input.manager_id ?? null : actor.id,
+    manager_id: input.manager_id,
     joined_on: input.joined_on || null,
     is_active: true,
   });
 
   if (profileError) {
     await admin.auth.admin.deleteUser(userId);
-    return NextResponse.json(
-      { error: profileError.message },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: profileError.message }, { status: 400 });
   }
 
   const { error: salaryError } = await admin.from("salary_config").upsert({
@@ -129,10 +201,7 @@ export async function POST(request: Request) {
 
   if (salaryError) {
     await admin.auth.admin.deleteUser(userId);
-    return NextResponse.json(
-      { error: salaryError.message },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: salaryError.message }, { status: 400 });
   }
 
   if (actor.role === "owner") {
@@ -144,10 +213,7 @@ export async function POST(request: Request) {
 
     if (targetError) {
       await admin.auth.admin.deleteUser(userId);
-      return NextResponse.json(
-        { error: targetError.message },
-        { status: 400 },
-      );
+      return NextResponse.json({ error: targetError.message }, { status: 400 });
     }
   }
 

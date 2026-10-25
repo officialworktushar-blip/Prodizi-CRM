@@ -42,6 +42,13 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -53,9 +60,11 @@ import {
 } from "@/components/ui/table";
 import { useNow } from "@/hooks/use-now";
 import { useRole } from "@/hooks/use-role";
+import { useTeamTree } from "@/hooks/use-team-tree";
 import { ROLE_LABELS, type Role } from "@/lib/constants";
 import { isAdminRole } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/client";
+import { getFlatDownline } from "@/lib/team-hierarchy";
 import {
   formatDate,
   formatINR,
@@ -73,6 +82,7 @@ import type {
 
 export default function SalaryPage() {
   const { profile, role, loading: roleLoading, error: roleError } = useRole();
+  const { members, loading: treeLoading } = useTeamTree();
   const queryClient = useQueryClient();
   const isAdmin = isAdminRole(role);
   const isOwner = role === "owner";
@@ -80,6 +90,7 @@ export default function SalaryPage() {
   const [monthOverride, setMonth] = useState<string | null>(null);
   const month = monthOverride ?? (now ? format(now, "yyyy-MM") : "");
   const [search, setSearch] = useState("");
+  const [memberFilter, setMemberFilter] = useState("all");
   const [payoutRow, setPayoutRow] = useState<SalaryMonthly | null>(null);
   const [manualRow, setManualRow] = useState<SalaryMonthly | null>(null);
   const [slipRow, setSlipRow] = useState<SalaryMonthly | null>(null);
@@ -90,7 +101,7 @@ export default function SalaryPage() {
 
   const salaryQuery = useQuery({
     queryKey: ["salary", "monthly", month, profile?.id, role],
-    enabled: Boolean(profile?.id) && Boolean(month),
+    enabled: Boolean(profile?.id) && Boolean(month) && !treeLoading,
     queryFn: async () => {
       const supabase = createClient();
       if (!isAdmin) {
@@ -104,11 +115,16 @@ export default function SalaryPage() {
         return (data ? [data] : []) as SalaryMonthly[];
       }
 
-      const { data, error } = await supabase
+      let query = supabase
         .from("salary_monthly")
         .select("*")
-        .eq("month", monthDate)
-        .order("full_name");
+        .eq("month", monthDate);
+      if (role === "manager") {
+        const ids = members.map((member) => member.id);
+        if (ids.length === 0) return [];
+        query = query.in("user_id", ids);
+      }
+      const { data, error } = await query.order("full_name");
       if (error) throw error;
       return (data ?? []) as SalaryMonthly[];
     },
@@ -116,7 +132,7 @@ export default function SalaryPage() {
 
   const payoutsQuery = useQuery({
     queryKey: ["salary-payouts", month, isAdmin ? "team" : profile?.id],
-    enabled: Boolean(profile?.id) && Boolean(month),
+    enabled: Boolean(profile?.id) && Boolean(month) && !treeLoading,
     queryFn: async () => {
       const supabase = createClient();
       let query = supabase
@@ -125,6 +141,10 @@ export default function SalaryPage() {
         .eq("month", monthDate);
       if (!isAdmin) {
         query = query.eq("user_id", profile!.id);
+      } else if (role === "manager") {
+        const ids = members.map((member) => member.id);
+        if (ids.length === 0) return [];
+        query = query.in("user_id", ids);
       }
       const { data, error } = await query;
       if (error) throw error;
@@ -153,9 +173,7 @@ export default function SalaryPage() {
     enabled: isOwner,
     queryFn: async () => {
       const supabase = createClient();
-      const { data, error } = await supabase
-        .from("salary_config")
-        .select("*");
+      const { data, error } = await supabase.from("salary_config").select("*");
       if (error) throw error;
       return (data ?? []) as SalaryConfig[];
     },
@@ -180,35 +198,43 @@ export default function SalaryPage() {
 
   const payoutMap = useMemo(
     () =>
-      new Map(
-        (payoutsQuery.data ?? []).map((item) => [item.user_id, item]),
-      ),
+      new Map((payoutsQuery.data ?? []).map((item) => [item.user_id, item])),
     [payoutsQuery.data],
   );
   const configMap = useMemo(
-    () => new Map((configsQuery.data ?? []).map((item) => [item.user_id, item])),
+    () =>
+      new Map((configsQuery.data ?? []).map((item) => [item.user_id, item])),
     [configsQuery.data],
   );
   const targetMap = useMemo(
-    () => new Map((targetsQuery.data ?? []).map((item) => [item.user_id, item])),
+    () =>
+      new Map((targetsQuery.data ?? []).map((item) => [item.user_id, item])),
     [targetsQuery.data],
   );
 
   const filteredRows = useMemo(() => {
     const needle = search.trim().toLowerCase();
-    if (!needle) return rows;
-    return rows.filter((item) =>
+    let result = rows;
+    if (isAdmin && memberFilter !== "all" && memberFilter !== "team") {
+      const ids = new Set([
+        memberFilter,
+        ...getFlatDownline(members, memberFilter).map((member) => member.id),
+      ]);
+      result = result.filter((item) => item.user_id && ids.has(item.user_id));
+    }
+    if (!needle) return result;
+    return result.filter((item) =>
       (item.full_name ?? "").toLowerCase().includes(needle),
     );
-  }, [rows, search]);
+  }, [isAdmin, memberFilter, members, rows, search]);
 
   const totals = useMemo(
     () => ({
-      payroll: rows.reduce(
+      payroll: filteredRows.reduce(
         (sum, item) => sum + toNumber(item.total_salary),
         0,
       ),
-      incentives: rows.reduce(
+      incentives: filteredRows.reduce(
         (sum, item) =>
           sum +
           toNumber(item.task_incentive) +
@@ -216,14 +242,14 @@ export default function SalaryPage() {
           toNumber(item.manual_incentive),
         0,
       ),
-      paid: rows
+      paid: filteredRows
         .filter((item) => item.payout_status === "paid")
         .reduce((sum, item) => sum + toNumber(item.total_salary), 0),
-      pending: rows
+      pending: filteredRows
         .filter((item) => item.payout_status !== "paid")
         .reduce((sum, item) => sum + toNumber(item.total_salary), 0),
     }),
-    [rows],
+    [filteredRows],
   );
 
   const markPaidMutation = useMutation({
@@ -247,9 +273,7 @@ export default function SalaryPage() {
           .eq("id", payout.id);
         if (error) throw error;
       } else {
-        const { error } = await supabase
-          .from("salary_payouts")
-          .insert(payload);
+        const { error } = await supabase.from("salary_payouts").insert(payload);
         if (error) throw error;
       }
     },
@@ -294,7 +318,7 @@ export default function SalaryPage() {
     XLSX.writeFile(workbook, `salary-${month}.xlsx`);
   };
 
-  if (roleLoading || !month) {
+  if (roleLoading || treeLoading || !month) {
     return (
       <div className="space-y-4">
         <Skeleton className="h-10 w-64" />
@@ -395,14 +419,32 @@ export default function SalaryPage() {
 
           <Card>
             <CardContent className="space-y-4">
-              <div className="relative max-w-sm">
-                <Search className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Search member..."
-                  className="pl-9"
-                />
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <div className="relative max-w-sm flex-1">
+                  <Search className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    value={search}
+                    onChange={(event) => setSearch(event.target.value)}
+                    placeholder="Search member..."
+                    className="pl-9"
+                  />
+                </div>
+                {isAdmin ? (
+                  <Select value={memberFilter} onValueChange={setMemberFilter}>
+                    <SelectTrigger className="w-full sm:w-[200px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All members</SelectItem>
+                      <SelectItem value="team">My whole team</SelectItem>
+                      {members.map((member) => (
+                        <SelectItem key={member.id} value={member.id}>
+                          {member.full_name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : null}
               </div>
 
               {salaryQuery.error ? (
@@ -450,19 +492,19 @@ export default function SalaryPage() {
                                 : "Member"}
                             </p>
                           </TableCell>
-                          <TableCell className="whitespace-nowrap text-sm">
+                          <TableCell className="text-sm whitespace-nowrap">
                             {formatINR(item.base_salary)}
                           </TableCell>
-                          <TableCell className="whitespace-nowrap text-sm">
+                          <TableCell className="text-sm whitespace-nowrap">
                             {formatINR(item.task_incentive)}
                           </TableCell>
-                          <TableCell className="whitespace-nowrap text-sm">
+                          <TableCell className="text-sm whitespace-nowrap">
                             {formatINR(item.sales_incentive)}
                           </TableCell>
-                          <TableCell className="whitespace-nowrap text-sm">
+                          <TableCell className="text-sm whitespace-nowrap">
                             {formatINR(item.manual_incentive)}
                           </TableCell>
-                          <TableCell className="whitespace-nowrap text-sm">
+                          <TableCell className="text-sm whitespace-nowrap">
                             <span className="text-brand-green">
                               +{formatINR(item.bonus)}
                             </span>
@@ -471,7 +513,7 @@ export default function SalaryPage() {
                               -{formatINR(item.deduction)}
                             </span>
                           </TableCell>
-                          <TableCell className="whitespace-nowrap text-sm font-semibold">
+                          <TableCell className="text-sm font-semibold whitespace-nowrap">
                             {formatINR(item.total_salary)}
                           </TableCell>
                           <TableCell>
@@ -485,10 +527,7 @@ export default function SalaryPage() {
                                 </span>
                               </div>
                               <Progress
-                                value={Math.min(
-                                  toNumber(item.target_pct),
-                                  100,
-                                )}
+                                value={Math.min(toNumber(item.target_pct), 100)}
                                 className="[&_[data-slot=progress-indicator]]:bg-brand-gradient"
                               />
                             </div>
@@ -538,7 +577,9 @@ export default function SalaryPage() {
                                 {item.payout_status !== "paid" ? (
                                   <DropdownMenuItem
                                     disabled={markPaidMutation.isPending}
-                                    onClick={() => markPaidMutation.mutate(item)}
+                                    onClick={() =>
+                                      markPaidMutation.mutate(item)
+                                    }
                                   >
                                     <CheckCircle2 className="size-4" />
                                     Mark as paid
@@ -626,11 +667,15 @@ export default function SalaryPage() {
                   <span>{formatINR(row.task_incentive)}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Sales incentives</span>
+                  <span className="text-muted-foreground">
+                    Sales incentives
+                  </span>
                   <span>{formatINR(row.sales_incentive)}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Manual incentives</span>
+                  <span className="text-muted-foreground">
+                    Manual incentives
+                  </span>
                   <span>{formatINR(row.manual_incentive)}</span>
                 </div>
                 <div className="flex justify-between">

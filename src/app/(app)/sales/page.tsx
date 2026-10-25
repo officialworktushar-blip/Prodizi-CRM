@@ -72,6 +72,7 @@ import {
 } from "@/components/ui/table";
 import { useNow } from "@/hooks/use-now";
 import { useRole } from "@/hooks/use-role";
+import { useTeamTree } from "@/hooks/use-team-tree";
 import {
   PAYMENT_STATUSES,
   PAYMENT_STATUS_LABELS,
@@ -80,6 +81,7 @@ import {
 } from "@/lib/constants";
 import { isAdminRole } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/client";
+import { getFlatDownline } from "@/lib/team-hierarchy";
 import {
   formatDate,
   formatINR,
@@ -87,13 +89,14 @@ import {
   todayISO,
   toNumber,
 } from "@/lib/utils";
-import type { Lead, Profile, Sale } from "@/types/database";
+import type { Lead, Sale } from "@/types/database";
 
 type DatePreset = "all" | "today" | "week" | "month" | "custom";
 type UpgradeFilter = "all" | "upgrade" | "new";
 
 export default function SalesPage() {
   const { profile, role, loading: roleLoading, error: roleError } = useRole();
+  const { members, loading: treeLoading } = useTeamTree();
   const isAdmin = isAdminRole(role);
   const queryClient = useQueryClient();
   const [paymentFilter, setPaymentFilter] = useState<"all" | PaymentStatus>(
@@ -116,13 +119,15 @@ export default function SalesPage() {
 
   const salesQuery = useQuery({
     queryKey: ["sales", profile?.id, role],
-    enabled: Boolean(profile?.id),
+    enabled: Boolean(profile?.id) && !treeLoading,
     queryFn: async () => {
       const supabase = createClient();
       let query = supabase.from("sales").select("*");
 
       if (!isAdmin) {
-        query = query.eq("sold_by", profile!.id);
+        const visibleIds = members.map((member) => member.id);
+        if (visibleIds.length === 0) return [];
+        query = query.in("sold_by", visibleIds);
       }
 
       const { data, error } = await query
@@ -130,21 +135,6 @@ export default function SalesPage() {
         .limit(1000);
       if (error) throw error;
       return (data ?? []) as Sale[];
-    },
-  });
-
-  const profilesQuery = useQuery({
-    queryKey: ["profiles", "sales-sellers"],
-    enabled: Boolean(profile?.id),
-    queryFn: async () => {
-      const supabase = createClient();
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("is_active", true)
-        .order("full_name");
-      if (error) throw error;
-      return (data ?? []) as Profile[];
     },
   });
 
@@ -183,8 +173,8 @@ export default function SalesPage() {
   });
 
   const profiles = useMemo(
-    () => profilesQuery.data ?? [],
-    [profilesQuery.data],
+    () => (members.length > 0 ? members : profile ? [profile] : []),
+    [members, profile],
   );
   const profileMap = useMemo(
     () => new Map(profiles.map((item) => [item.id, item])),
@@ -233,18 +223,15 @@ export default function SalesPage() {
   const filteredSales = useMemo(() => {
     const needle = search.trim().toLowerCase();
     return sales.filter((sale) => {
-      if (
-        paymentFilter !== "all" &&
-        sale.payment_status !== paymentFilter
-      ) {
+      if (paymentFilter !== "all" && sale.payment_status !== paymentFilter) {
         return false;
       }
-      if (
-        isAdmin &&
-        sellerFilter !== "all" &&
-        sale.sold_by !== sellerFilter
-      ) {
-        return false;
+      if (isAdmin && sellerFilter !== "all" && sellerFilter !== "team") {
+        const ids = new Set([
+          sellerFilter,
+          ...getFlatDownline(profiles, sellerFilter).map((member) => member.id),
+        ]);
+        if (!sale.sold_by || !ids.has(sale.sold_by)) return false;
       }
       if (
         serviceFilter !== "all" &&
@@ -271,6 +258,7 @@ export default function SalesPage() {
     sales,
     paymentFilter,
     sellerFilter,
+    profiles,
     serviceFilter,
     upgradeFilter,
     dateRange,
@@ -300,8 +288,7 @@ export default function SalesPage() {
     [filteredSales],
   );
 
-  const detailSale =
-    sales.find((sale) => sale.id === detailSaleId) ?? null;
+  const detailSale = sales.find((sale) => sale.id === detailSaleId) ?? null;
 
   const exportSales = () => {
     const rows = filteredSales.map((sale) => ({
@@ -325,7 +312,7 @@ export default function SalesPage() {
     XLSX.writeFile(workbook, `sales-${todayISO()}.xlsx`);
   };
 
-  if (roleLoading) {
+  if (roleLoading || treeLoading) {
     return (
       <div className="space-y-4">
         <Skeleton className="h-10 w-64" />
@@ -443,10 +430,7 @@ export default function SalesPage() {
                   <SelectItem value="custom">Custom range</SelectItem>
                 </SelectContent>
               </Select>
-              <Select
-                value={serviceFilter}
-                onValueChange={setServiceFilter}
-              >
+              <Select value={serviceFilter} onValueChange={setServiceFilter}>
                 <SelectTrigger className="w-full lg:w-[180px]">
                   <SelectValue />
                 </SelectTrigger>
@@ -499,6 +483,7 @@ export default function SalesPage() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All sellers</SelectItem>
+                    <SelectItem value="team">My whole team</SelectItem>
                     {profiles.map((member) => (
                       <SelectItem key={member.id} value={member.id}>
                         {member.full_name}
@@ -611,19 +596,19 @@ export default function SalesPage() {
                             {sale.service_sold || "Not specified"}
                           </p>
                         </TableCell>
-                        <TableCell className="whitespace-nowrap text-sm">
+                        <TableCell className="text-sm whitespace-nowrap">
                           {formatDate(sale.sale_date)}
                         </TableCell>
-                        <TableCell className="whitespace-nowrap text-sm">
+                        <TableCell className="text-sm whitespace-nowrap">
                           {formatDate(sale.sale_date)}
                         </TableCell>
-                        <TableCell className="whitespace-nowrap text-sm font-medium">
+                        <TableCell className="text-sm font-medium whitespace-nowrap">
                           {formatINR(sale.total_amount)}
                         </TableCell>
-                        <TableCell className="whitespace-nowrap text-sm text-brand-green">
+                        <TableCell className="text-sm whitespace-nowrap text-brand-green">
                           {formatINR(sale.received_amount)}
                         </TableCell>
-                        <TableCell className="whitespace-nowrap text-sm text-brand-orange">
+                        <TableCell className="text-sm whitespace-nowrap text-brand-orange">
                           {formatINR(sale.remaining_amount)}
                         </TableCell>
                         <TableCell>
@@ -645,9 +630,7 @@ export default function SalesPage() {
                                 {seller?.full_name ?? "—"}
                               </p>
                               <p className="text-xs text-muted-foreground">
-                                {seller?.role
-                                  ? ROLE_LABELS[seller.role]
-                                  : ""}
+                                {seller?.role ? ROLE_LABELS[seller.role] : ""}
                               </p>
                             </div>
                           </div>

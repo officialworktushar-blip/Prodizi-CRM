@@ -68,6 +68,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useNow } from "@/hooks/use-now";
 import { useRole } from "@/hooks/use-role";
+import { useTeamTree } from "@/hooks/use-team-tree";
 import {
   ROLE_LABELS,
   TASK_STATUSES,
@@ -80,6 +81,7 @@ import {
 } from "@/lib/constants";
 import { canEditTask, isAdminRole } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/client";
+import { getFlatDownline } from "@/lib/team-hierarchy";
 import {
   cn,
   formatDate,
@@ -239,7 +241,9 @@ function TaskRow({
 
 export default function TasksPage() {
   const { profile, role, loading: roleLoading, error: roleError } = useRole();
-  const isAdmin = isAdminRole(role);
+  const { members, assignableMembers, loading: treeLoading } = useTeamTree();
+  const effectiveRole = role ?? (profile?.role as Role | undefined) ?? null;
+  const isAdmin = isAdminRole(effectiveRole);
   const queryClient = useQueryClient();
   const [typeTab, setTypeTab] = useState<TypeTab>("all");
   const [view, setView] = useState<ViewMode>("board");
@@ -258,10 +262,7 @@ export default function TasksPage() {
   const { weekStart, weekEnd } = useMemo(() => {
     if (!now) return { weekStart: "", weekEnd: "" };
     return {
-      weekStart: format(
-        startOfWeek(now, { weekStartsOn: 1 }),
-        "yyyy-MM-dd",
-      ),
+      weekStart: format(startOfWeek(now, { weekStartsOn: 1 }), "yyyy-MM-dd"),
       weekEnd: format(endOfWeek(now, { weekStartsOn: 1 }), "yyyy-MM-dd"),
     };
   }, [now]);
@@ -269,13 +270,15 @@ export default function TasksPage() {
 
   const tasksQuery = useQuery({
     queryKey: tasksQueryKey,
-    enabled: Boolean(profile?.id),
+    enabled: Boolean(profile?.id) && !treeLoading,
     queryFn: async () => {
       const supabase = createClient();
       let query = supabase.from("tasks").select("*");
 
       if (!isAdmin) {
-        query = query.eq("assigned_to", profile!.id);
+        const visibleIds = members.map((member) => member.id);
+        if (visibleIds.length === 0) return [];
+        query = query.in("assigned_to", visibleIds);
       }
 
       const { data, error } = await query
@@ -283,21 +286,6 @@ export default function TasksPage() {
         .limit(500);
       if (error) throw error;
       return (data ?? []) as Task[];
-    },
-  });
-
-  const profilesQuery = useQuery({
-    queryKey: ["profiles", "task-assignees"],
-    enabled: Boolean(profile?.id),
-    queryFn: async () => {
-      const supabase = createClient();
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("is_active", true)
-        .order("full_name");
-      if (error) throw error;
-      return (data ?? []) as Profile[];
     },
   });
 
@@ -444,9 +432,25 @@ export default function TasksPage() {
   });
 
   const profiles = useMemo(
-    () => profilesQuery.data ?? [],
-    [profilesQuery.data],
+    () => (members.length > 0 ? members : profile ? [profile] : []),
+    [members, profile],
   );
+  const assignableProfiles = useMemo(() => {
+    if (!profile) return [];
+    return assignableMembers.length > 0 ? assignableMembers : [profile];
+  }, [assignableMembers, profile]);
+  const dialogProfiles = useMemo(() => {
+    if (!editingTask) return assignableProfiles;
+    if (
+      assignableProfiles.some((member) => member.id === editingTask.assigned_to)
+    ) {
+      return assignableProfiles;
+    }
+    const assignee = profiles.find(
+      (member) => member.id === editingTask.assigned_to,
+    );
+    return assignee ? [...assignableProfiles, assignee] : assignableProfiles;
+  }, [assignableProfiles, editingTask, profiles]);
   const profileMap = useMemo(
     () => new Map(profiles.map((item) => [item.id, item])),
     [profiles],
@@ -468,12 +472,14 @@ export default function TasksPage() {
     const needle = deferredSearch.trim().toLowerCase();
 
     return typeTasks.filter((task) => {
-      if (
-        isAdmin &&
-        assigneeFilter !== "all" &&
-        task.assigned_to !== assigneeFilter
-      ) {
-        return false;
+      if (isAdmin && assigneeFilter !== "all" && assigneeFilter !== "team") {
+        const ids = new Set([
+          assigneeFilter,
+          ...getFlatDownline(profiles, assigneeFilter).map(
+            (member) => member.id,
+          ),
+        ]);
+        if (!ids.has(task.assigned_to)) return false;
       }
 
       if (leadFilter === "linked" && !task.lead_id) return false;
@@ -511,6 +517,7 @@ export default function TasksPage() {
     typeTasks,
     isAdmin,
     assigneeFilter,
+    profiles,
     leadFilter,
     dueFilter,
     today,
@@ -552,7 +559,7 @@ export default function TasksPage() {
     isTaskOverdue(task, today),
   ).length;
 
-  if (roleLoading || !now) {
+  if (roleLoading || treeLoading || !now) {
     return (
       <div className="space-y-4">
         <Skeleton className="h-10 w-64" />
@@ -576,7 +583,6 @@ export default function TasksPage() {
     );
   }
 
-  const effectiveRole = role ?? (profile.role as Role);
   const canEdit = (task: Task) => canEditTask(effectiveRole, profile.id, task);
   const canChangeStatus = (task: Task) =>
     canEdit(task) && (isAdmin || task.assigned_to === profile.id);
@@ -815,6 +821,7 @@ export default function TasksPage() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All members</SelectItem>
+                    <SelectItem value="team">My whole team</SelectItem>
                     {profiles.map((member) => (
                       <SelectItem key={member.id} value={member.id}>
                         {member.full_name}
@@ -913,7 +920,7 @@ export default function TasksPage() {
           if (!next) setEditingTask(null);
         }}
         task={editingTask}
-        profiles={profiles.length > 0 ? profiles : [profile]}
+        profiles={dialogProfiles}
         leads={leads}
         currentUserId={profile.id}
         canAssign={isAdmin}

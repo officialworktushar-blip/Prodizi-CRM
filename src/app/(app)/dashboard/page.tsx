@@ -52,11 +52,8 @@ import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useNow } from "@/hooks/use-now";
 import { useRole } from "@/hooks/use-role";
-import {
-  BRAND_COLORS,
-  LEAD_STATUS_LABELS,
-  ROLE_LABELS,
-} from "@/lib/constants";
+import { useTeamTree } from "@/hooks/use-team-tree";
+import { BRAND_COLORS, LEAD_STATUS_LABELS, ROLE_LABELS } from "@/lib/constants";
 import { createClient } from "@/lib/supabase/client";
 import {
   formatCompactINR,
@@ -133,37 +130,59 @@ function ChartTooltip({
 }
 
 function AdminDashboard() {
-  const { profile } = useRole();
+  const { profile, role } = useRole();
+  const { members, loading: treeLoading } = useTeamTree();
   const now = useNow();
   const query = useQuery({
-    queryKey: ["dashboard", "admin"],
+    queryKey: ["dashboard", "admin", profile?.id, role, members.length],
+    enabled: Boolean(profile?.id) && !treeLoading,
     queryFn: async () => {
       const supabase = createClient();
       const monthStart = startOfMonth(new Date());
       const monthStartIso = monthStart.toISOString();
       const nextMonthIso = addMonths(monthStart, 1).toISOString();
       const todayStartIso = startOfDay(new Date()).toISOString();
+      const ids = members.map((member) => member.id);
+      const isOwner = role === "owner";
+
+      if (!isOwner && ids.length === 0) {
+        return {
+          leads: [],
+          sales: [],
+          tasksCompletedToday: 0,
+          stats: [],
+          monthStartIso,
+          nextMonthIso,
+        };
+      }
+
+      let leadsQuery = supabase
+        .from("leads")
+        .select("id,status,created_at,updated_at,expected_value");
+      let salesQuery = supabase
+        .from("sales")
+        .select(
+          "id,total_amount,received_amount,remaining_amount,payment_status,sale_date,sold_by",
+        );
+      let tasksQuery = supabase
+        .from("tasks")
+        .select("id,status,completed_at")
+        .eq("status", "completed")
+        .gte("completed_at", todayStartIso);
+      let statsQuery = supabase
+        .from("member_stats")
+        .select("*")
+        .order("performance_pct", { ascending: false });
+
+      if (!isOwner) {
+        leadsQuery = leadsQuery.in("assigned_to", ids);
+        salesQuery = salesQuery.in("sold_by", ids);
+        tasksQuery = tasksQuery.in("assigned_to", ids);
+        statsQuery = statsQuery.in("user_id", ids);
+      }
 
       const [leadsResult, salesResult, tasksResult, statsResult] =
-        await Promise.all([
-          supabase
-            .from("leads")
-            .select("id,status,created_at,updated_at,expected_value"),
-          supabase
-            .from("sales")
-            .select(
-              "id,total_amount,received_amount,remaining_amount,payment_status,sale_date,sold_by",
-            ),
-          supabase
-            .from("tasks")
-            .select("id,status,completed_at")
-            .eq("status", "completed")
-            .gte("completed_at", todayStartIso),
-          supabase
-            .from("member_stats")
-            .select("*")
-            .order("performance_pct", { ascending: false }),
-        ]);
+        await Promise.all([leadsQuery, salesQuery, tasksQuery, statsQuery]);
 
       const error =
         leadsResult.error ??
@@ -183,7 +202,7 @@ function AdminDashboard() {
     },
   });
 
-  if (query.isLoading || !now) return <DashboardSkeleton />;
+  if (query.isLoading || treeLoading || !now) return <DashboardSkeleton />;
   if (query.error) {
     return (
       <ErrorState
@@ -266,7 +285,11 @@ function AdminDashboard() {
     <div className="space-y-6">
       <PageHeader
         title={`Good to see you, ${profile?.full_name.split(" ")[0] ?? "there"}`}
-        description="Company performance, revenue and pipeline in one view."
+        description={
+          role === "owner"
+            ? "Company performance, revenue and pipeline in one view."
+            : "Your team's performance, revenue and pipeline in one view."
+        }
         eyebrow="Overview"
         actions={
           <Badge variant="secondary" className="h-7 px-3">
@@ -307,7 +330,7 @@ function AdminDashboard() {
         <StatCard
           title="Tasks completed today"
           value={tasksCompletedToday}
-          hint="Across the whole team"
+          hint={role === "owner" ? "Across the company" : "Across your team"}
           icon={ListChecks}
           accent="green"
         />
@@ -396,9 +419,7 @@ function AdminDashboard() {
                       {leadStatusData.map((entry) => (
                         <Cell
                           key={entry.status}
-                          fill={
-                            statusColors[entry.status] ?? BRAND_COLORS.blue
-                          }
+                          fill={statusColors[entry.status] ?? BRAND_COLORS.blue}
                         />
                       ))}
                     </Pie>
@@ -470,7 +491,9 @@ function AdminDashboard() {
                     <p className="truncate text-xs text-muted-foreground">
                       {member.designation ??
                         member.position ??
-                        (member.role ? ROLE_LABELS[member.role] : "Team member")}
+                        (member.role
+                          ? ROLE_LABELS[member.role]
+                          : "Team member")}
                     </p>
                   </div>
                   <div className="w-28 shrink-0">
@@ -733,7 +756,9 @@ function EmployeeDashboard() {
                   <span>{formatINR(salary?.task_incentive)}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Sales incentives</span>
+                  <span className="text-muted-foreground">
+                    Sales incentives
+                  </span>
                   <span>{formatINR(salary?.sales_incentive)}</span>
                 </div>
                 <div className="flex justify-between">

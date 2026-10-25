@@ -88,6 +88,15 @@ export function LeadDialog({
     mutationFn: async (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault();
       const supabase = createClient();
+      const assignmentChanged = lead
+        ? lead.assigned_to !== assignedTo
+        : Boolean(assignedTo);
+      const assignmentMeta = assignmentChanged
+        ? {
+            assigned_by: currentUserId,
+            assigned_at: new Date().toISOString(),
+          }
+        : {};
       const payload = {
         client_name: clientName.trim(),
         company: company.trim() || null,
@@ -100,6 +109,7 @@ export function LeadDialog({
         source: source.trim() || null,
         expected_value: expectedValue ? Number(expectedValue) : null,
         assigned_to: assignedTo,
+        ...assignmentMeta,
         next_follow_up: nextFollowUp || null,
         notes: notes.trim() || null,
       };
@@ -209,9 +219,7 @@ export function LeadDialog({
               <Label>Frequency</Label>
               <Select
                 value={frequency}
-                onValueChange={(value) =>
-                  setFrequency(value as LeadFrequency)
-                }
+                onValueChange={(value) => setFrequency(value as LeadFrequency)}
               >
                 <SelectTrigger className="w-full">
                   <SelectValue />

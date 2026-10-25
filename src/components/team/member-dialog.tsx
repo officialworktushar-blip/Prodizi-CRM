@@ -2,10 +2,11 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
-import { Loader2 } from "lucide-react";
-import { useState, type FormEvent } from "react";
+import { AlertTriangle, Loader2 } from "lucide-react";
+import { useMemo, useState, type FormEvent } from "react";
 import { toast } from "sonner";
 
+import { RoleBadge } from "@/components/shared/role-badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -25,13 +26,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import {
-  ROLES,
-  ROLE_LABELS,
-  type Role,
-} from "@/lib/constants";
 import { useNow } from "@/hooks/use-now";
+import { ROLE_LABELS, type Role } from "@/lib/constants";
 import { createClient } from "@/lib/supabase/client";
+import { getManagerCandidates } from "@/lib/team-hierarchy";
 import type { Profile, SalaryConfig } from "@/types/database";
 
 type MemberDialogProps = {
@@ -40,7 +38,8 @@ type MemberDialogProps = {
   member?: Profile | null;
   salaryConfig?: SalaryConfig | null;
   monthlyTarget?: number | null;
-  managers?: Profile[];
+  profiles: Profile[];
+  actorId: string;
   actorRole: Role;
 };
 
@@ -50,7 +49,8 @@ export function MemberDialog({
   member,
   salaryConfig,
   monthlyTarget,
-  managers = [],
+  profiles,
+  actorId,
   actorRole,
 }: MemberDialogProps) {
   const queryClient = useQueryClient();
@@ -60,7 +60,8 @@ export function MemberDialog({
   const [password, setPassword] = useState("");
   const [phone, setPhone] = useState(member?.phone ?? "");
   const [role, setRole] = useState<Role>(
-    (member?.role as Role | undefined) ?? "employee",
+    (member?.role as Role | undefined) ??
+      (actorRole === "owner" ? "employee" : "intern"),
   );
   const [designation, setDesignation] = useState(member?.designation ?? "");
   const [position, setPosition] = useState(member?.position ?? "");
@@ -82,17 +83,51 @@ export function MemberDialog({
   const [target, setTarget] = useState(String(monthlyTarget ?? 0));
   const [isActive, setIsActive] = useState(member?.is_active ?? true);
 
-  const allowedRoles =
-    actorRole === "owner"
-      ? ROLES
-      : ROLES.filter((item) => item === "employee" || item === "intern");
+  const isExistingOwner = member?.role === "owner";
+  const allowedRoles = useMemo(() => {
+    if (isExistingOwner) return ["owner"] as Role[];
+    if (actorRole === "owner") {
+      return ["manager", "employee", "intern"] as Role[];
+    }
+    return ["employee", "intern"] as Role[];
+  }, [actorRole, isExistingOwner]);
+
+  const actor = profiles.find((profile) => profile.id === actorId) ?? null;
+  const managerCandidates = useMemo(
+    () =>
+      getManagerCandidates({
+        profiles,
+        actor,
+        targetRole: role,
+        editingId: member?.id,
+      }),
+    [actor, member?.id, profiles, role],
+  );
+
   const requiresWorkDetails = role === "employee" || role === "intern";
   const missingWorkDetails =
     requiresWorkDetails && (!dedicatedWork.trim() || !position.trim());
+  const fallbackManagerId = member
+    ? (managerCandidates[0]?.id ?? "")
+    : actorRole !== "owner" &&
+        managerCandidates.some((candidate) => candidate.id === actorId)
+      ? actorId
+      : "";
+  const effectiveManagerId =
+    role === "owner"
+      ? ""
+      : managerCandidates.some((candidate) => candidate.id === managerId)
+        ? managerId
+        : fallbackManagerId;
+  const missingManager = role !== "owner" && !effectiveManagerId;
 
   const mutation = useMutation({
     mutationFn: async (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault();
+
+      if (missingManager) {
+        throw new Error("Select who this member reports to");
+      }
 
       if (!member) {
         const response = await fetch("/api/admin/create-member", {
@@ -107,16 +142,14 @@ export function MemberDialog({
             designation: designation.trim() || null,
             position: position.trim() || null,
             dedicated_work: dedicatedWork.trim() || null,
-            manager_id: managerId || null,
+            manager_id: effectiveManagerId || null,
             joined_on: joinedOn || null,
             base_salary: Number(baseSalary) || 0,
             sales_incentive_percent: Number(salesPercent) || 0,
             monthly_target: Number(target) || 0,
           }),
         });
-        const payload = (await response.json()) as {
-          error?: string;
-        };
+        const payload = (await response.json()) as { error?: string };
         if (!response.ok) {
           throw new Error(payload.error ?? "Could not create member");
         }
@@ -129,12 +162,11 @@ export function MemberDialog({
         .update({
           full_name: fullName.trim(),
           phone: phone.trim() || null,
-          role,
+          role: isExistingOwner ? "owner" : role,
           designation: designation.trim() || null,
           position: position.trim() || null,
           dedicated_work: dedicatedWork.trim() || null,
-          manager_id:
-            actorRole === "owner" ? managerId || null : member.manager_id,
+          manager_id: isExistingOwner ? null : effectiveManagerId || null,
           joined_on: joinedOn || null,
           is_active: isActive,
         })
@@ -151,13 +183,14 @@ export function MemberDialog({
           });
         if (salaryError) throw salaryError;
 
-        const targetMonth = format(new Date(), "yyyy-MM-01");
-        const { data: existingTarget, error: targetLookupError } = await supabase
-          .from("targets")
-          .select("id")
-          .eq("user_id", member.id)
-          .eq("month", targetMonth)
-          .maybeSingle();
+        const targetMonth = format(now ?? new Date(), "yyyy-MM-01");
+        const { data: existingTarget, error: targetLookupError } =
+          await supabase
+            .from("targets")
+            .select("id")
+            .eq("user_id", member.id)
+            .eq("month", targetMonth)
+            .maybeSingle();
         if (targetLookupError) throw targetLookupError;
 
         const targetPayload = {
@@ -192,11 +225,13 @@ export function MemberDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{member ? "Edit member" : "Add team member"}</DialogTitle>
+          <DialogTitle>
+            {member ? "Edit member" : "Add team member"}
+          </DialogTitle>
           <DialogDescription>
             {member
-              ? "Update role, contact details and access."
-              : "Create a login and profile for a new member."}
+              ? "Update role, reporting line, contact details and access."
+              : "Create a login and place the new member in your team hierarchy."}
           </DialogDescription>
         </DialogHeader>
 
@@ -252,6 +287,7 @@ export function MemberDialog({
               <Select
                 value={role}
                 onValueChange={(value) => setRole(value as Role)}
+                disabled={isExistingOwner}
               >
                 <SelectTrigger className="w-full">
                   <SelectValue />
@@ -264,35 +300,55 @@ export function MemberDialog({
                   ))}
                 </SelectContent>
               </Select>
+              {actorRole === "owner" ? (
+                <p className="text-xs text-muted-foreground">
+                  Owners can place managers anywhere; managers can add employees
+                  and interns.
+                </p>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  You can add employees and interns to your own branch.
+                </p>
+              )}
             </div>
-            {actorRole === "owner" ? (
+            {role !== "owner" ? (
               <div className="space-y-2">
-                <Label>Reporting manager</Label>
+                <Label>
+                  Reports to
+                  <span className="text-brand-red"> *</span>
+                </Label>
                 <Select
-                  value={managerId || "none"}
-                  onValueChange={(value) =>
-                    setManagerId(value === "none" ? "" : value)
-                  }
+                  value={effectiveManagerId || undefined}
+                  onValueChange={setManagerId}
                 >
                   <SelectTrigger className="w-full">
-                    <SelectValue placeholder="No manager" />
+                    <SelectValue placeholder="Select reporting manager" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="none">No manager</SelectItem>
-                    {managers
-                      .filter(
-                        (item) =>
-                          item.is_active &&
-                          (item.role === "owner" || item.role === "manager") &&
-                          item.id !== member?.id,
-                      )
-                      .map((item) => (
-                        <SelectItem key={item.id} value={item.id}>
-                          {item.full_name}
-                        </SelectItem>
-                      ))}
+                    {managerCandidates.map((candidate) => (
+                      <SelectItem key={candidate.id} value={candidate.id}>
+                        <span className="flex items-center gap-2">
+                          <span>{candidate.full_name}</span>
+                          <RoleBadge
+                            role={candidate.role}
+                            className="px-1.5 py-0 text-[0.65rem]"
+                          />
+                        </span>
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
+                {managerCandidates.length === 0 ? (
+                  <p className="flex items-center gap-1.5 text-xs text-brand-red">
+                    <AlertTriangle className="size-3.5" />
+                    No valid reporting manager is available for this role.
+                  </p>
+                ) : null}
+                {missingManager ? (
+                  <p className="text-xs text-brand-red">
+                    Reports-to is required for every non-owner member.
+                  </p>
+                ) : null}
               </div>
             ) : null}
             <div className="space-y-2">
@@ -346,9 +402,13 @@ export function MemberDialog({
               required={requiresWorkDetails}
               aria-invalid={requiresWorkDetails && !dedicatedWork.trim()}
             />
+            <p className="text-xs text-muted-foreground">
+              Used by lead recommendations to match new leads with the right
+              member.
+            </p>
           </div>
 
-          {actorRole === "owner" ? (
+          {actorRole === "owner" && !isExistingOwner ? (
             <div className="grid gap-4 rounded-xl border bg-muted/30 p-3 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="member-base">Base salary (₹/month)</Label>
@@ -393,6 +453,7 @@ export function MemberDialog({
                 id="member-active"
                 checked={isActive}
                 onCheckedChange={setIsActive}
+                disabled={isExistingOwner}
               />
               <div>
                 <Label htmlFor="member-active">Active member</Label>
@@ -417,6 +478,7 @@ export function MemberDialog({
                 mutation.isPending ||
                 !fullName.trim() ||
                 missingWorkDetails ||
+                missingManager ||
                 (!member && (!email.trim() || password.length < 8))
               }
             >
