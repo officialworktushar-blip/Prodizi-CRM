@@ -77,6 +77,18 @@ export function todayISO() {
   return format(new Date(), "yyyy-MM-dd");
 }
 
+export function isTaskOverdue(task: {
+  due_date: string | null;
+  status: string;
+}) {
+  return Boolean(
+    task.due_date &&
+    task.due_date < todayISO() &&
+    task.status !== "completed" &&
+    task.status !== "cancelled",
+  );
+}
+
 export function monthStartISO(value: Date | string | number = new Date()) {
   return format(startOfMonth(parseDate(value) ?? new Date()), "yyyy-MM-dd");
 }

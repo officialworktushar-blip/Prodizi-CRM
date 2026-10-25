@@ -24,19 +24,16 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  TASK_TYPES,
-  TASK_TYPE_LABELS,
-  type TaskType,
-} from "@/lib/constants";
+import { TASK_TYPES, TASK_TYPE_LABELS, type TaskType } from "@/lib/constants";
 import { createClient } from "@/lib/supabase/client";
-import type { Profile, Task } from "@/types/database";
+import type { Lead, Profile, Task } from "@/types/database";
 
 type TaskDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   task?: Task | null;
   profiles: Profile[];
+  leads: Lead[];
   currentUserId: string;
   canAssign: boolean;
 };
@@ -46,6 +43,7 @@ export function TaskDialog({
   onOpenChange,
   task,
   profiles,
+  leads,
   currentUserId,
   canAssign,
 }: TaskDialogProps) {
@@ -59,6 +57,7 @@ export function TaskDialog({
     task?.assigned_to ?? currentUserId,
   );
   const [dueDate, setDueDate] = useState(task?.due_date ?? "");
+  const [leadId, setLeadId] = useState(task?.lead_id ?? "none");
   const [incentive, setIncentive] = useState(
     String(task?.incentive_amount ?? 0),
   );
@@ -72,10 +71,9 @@ export function TaskDialog({
         description: description.trim() || null,
         task_type: taskType,
         assigned_to: assignedTo,
+        lead_id: leadId === "none" ? null : leadId,
         due_date: dueDate || null,
-        ...(canAssign
-          ? { incentive_amount: Number(incentive) || 0 }
-          : {}),
+        ...(canAssign ? { incentive_amount: Number(incentive) || 0 } : {}),
       };
 
       if (task) {
@@ -98,6 +96,8 @@ export function TaskDialog({
       void queryClient.invalidateQueries({ queryKey: ["tasks"] });
       void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       void queryClient.invalidateQueries({ queryKey: ["notifications"] });
+      void queryClient.invalidateQueries({ queryKey: ["salary"] });
+      void queryClient.invalidateQueries({ queryKey: ["leads"] });
       onOpenChange(false);
     },
     onError: (error) => {
@@ -112,8 +112,8 @@ export function TaskDialog({
           <DialogTitle>{task ? "Edit task" : "New task"}</DialogTitle>
           <DialogDescription>
             {canAssign
-              ? "Assign work to a team member and set its incentive."
-              : "Create a task for yourself."}
+              ? "Assign work to a team member, link a lead and set its incentive."
+              : "Create a task for yourself or link it to one of your leads."}
           </DialogDescription>
         </DialogHeader>
         <form
@@ -139,6 +139,22 @@ export function TaskDialog({
               placeholder="Add context or next steps"
               rows={3}
             />
+          </div>
+          <div className="space-y-2">
+            <Label>Linked lead</Label>
+            <Select value={leadId} onValueChange={setLeadId}>
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="No lead" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">No lead</SelectItem>
+                {leads.map((lead) => (
+                  <SelectItem key={lead.id} value={lead.id}>
+                    {lead.client_name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
@@ -206,7 +222,10 @@ export function TaskDialog({
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={mutation.isPending || !title.trim()}>
+            <Button
+              type="submit"
+              disabled={mutation.isPending || !title.trim()}
+            >
               {mutation.isPending ? (
                 <Loader2 className="size-4 animate-spin" />
               ) : null}
