@@ -13,89 +13,111 @@ export type Database = {
         Row: {
           id: string;
           full_name: string;
-          email: string;
-          role: Database["public"]["Enums"]["user_role"];
+          email: string | null;
           phone: string | null;
+          role: Database["public"]["Enums"]["user_role"];
+          designation: string | null;
+          position: string | null;
+          dedicated_work: string | null;
+          manager_id: string | null;
           avatar_url: string | null;
+          joined_on: string | null;
           is_active: boolean;
           created_at: string;
-          updated_at: string;
         };
         Insert: {
           id: string;
           full_name: string;
-          email: string;
-          role?: Database["public"]["Enums"]["user_role"];
+          email?: string | null;
           phone?: string | null;
+          role?: Database["public"]["Enums"]["user_role"];
+          designation?: string | null;
+          position?: string | null;
+          dedicated_work?: string | null;
+          manager_id?: string | null;
           avatar_url?: string | null;
+          joined_on?: string | null;
           is_active?: boolean;
           created_at?: string;
-          updated_at?: string;
         };
         Update: {
           id?: string;
           full_name?: string;
-          email?: string;
-          role?: Database["public"]["Enums"]["user_role"];
+          email?: string | null;
           phone?: string | null;
+          role?: Database["public"]["Enums"]["user_role"];
+          designation?: string | null;
+          position?: string | null;
+          dedicated_work?: string | null;
+          manager_id?: string | null;
           avatar_url?: string | null;
+          joined_on?: string | null;
           is_active?: boolean;
           created_at?: string;
-          updated_at?: string;
         };
         Relationships: [];
       };
       salary_config: {
         Row: {
-          id: string;
-          member_id: string;
+          user_id: string;
           base_salary: number;
-          daily_allowance: number;
           sales_incentive_percent: number;
-          created_at: string;
-          updated_at: string;
+        };
+        Insert: {
+          user_id: string;
+          base_salary: number;
+          sales_incentive_percent: number;
+        };
+        Update: {
+          user_id?: string;
+          base_salary?: number;
+          sales_incentive_percent?: number;
+        };
+        Relationships: [];
+      };
+      salary_payouts: {
+        Row: {
+          id: string;
+          user_id: string;
+          month: string;
+          bonus: number;
+          deduction: number;
+          status: string;
+          paid_on: string | null;
         };
         Insert: {
           id?: string;
-          member_id: string;
-          base_salary?: number;
-          daily_allowance?: number;
-          sales_incentive_percent?: number;
-          created_at?: string;
-          updated_at?: string;
+          user_id: string;
+          month: string;
+          bonus?: number;
+          deduction?: number;
+          status?: string;
+          paid_on?: string | null;
         };
         Update: {
           id?: string;
-          member_id?: string;
-          base_salary?: number;
-          daily_allowance?: number;
-          sales_incentive_percent?: number;
-          created_at?: string;
-          updated_at?: string;
+          user_id?: string;
+          month?: string;
+          bonus?: number;
+          deduction?: number;
+          status?: string;
+          paid_on?: string | null;
         };
-        Relationships: [
-          {
-            foreignKeyName: "salary_config_member_id_fkey";
-            columns: ["member_id"];
-            isOneToOne: true;
-            referencedRelation: "profiles";
-            referencedColumns: ["id"];
-          },
-        ];
+        Relationships: [];
       };
       tasks: {
         Row: {
           id: string;
           title: string;
           description: string | null;
-          assigned_to: string | null;
+          task_type: Database["public"]["Enums"]["task_type"];
+          status: Database["public"]["Enums"]["task_status"];
+          assigned_to: string;
           created_by: string | null;
           lead_id: string | null;
-          type: Database["public"]["Enums"]["task_type"];
-          status: Database["public"]["Enums"]["task_status"];
           due_date: string | null;
-          completed_at: string | null;
           incentive_amount: number;
+          completed_at: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -103,14 +125,14 @@ export type Database = {
           id?: string;
           title: string;
           description?: string | null;
-          assigned_to?: string | null;
+          task_type: Database["public"]["Enums"]["task_type"];
+          status?: Database["public"]["Enums"]["task_status"];
+          assigned_to: string;
           created_by?: string | null;
           lead_id?: string | null;
-          type?: Database["public"]["Enums"]["task_type"];
-          status?: Database["public"]["Enums"]["task_status"];
           due_date?: string | null;
-          completed_at?: string | null;
           incentive_amount?: number;
+          completed_at?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -118,274 +140,280 @@ export type Database = {
           id?: string;
           title?: string;
           description?: string | null;
-          assigned_to?: string | null;
+          task_type?: Database["public"]["Enums"]["task_type"];
+          status?: Database["public"]["Enums"]["task_status"];
+          assigned_to?: string;
           created_by?: string | null;
           lead_id?: string | null;
-          type?: Database["public"]["Enums"]["task_type"];
-          status?: Database["public"]["Enums"]["task_status"];
           due_date?: string | null;
-          completed_at?: string | null;
           incentive_amount?: number;
+          completed_at?: string | null;
           created_at?: string;
           updated_at?: string;
         };
-        Relationships: [
-          {
-            foreignKeyName: "tasks_assigned_to_fkey";
-            columns: ["assigned_to"];
-            isOneToOne: false;
-            referencedRelation: "profiles";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "tasks_created_by_fkey";
-            columns: ["created_by"];
-            isOneToOne: false;
-            referencedRelation: "profiles";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "tasks_lead_id_fkey";
-            columns: ["lead_id"];
-            isOneToOne: false;
-            referencedRelation: "leads";
-            referencedColumns: ["id"];
-          },
-        ];
+        Relationships: [];
       };
       leads: {
         Row: {
           id: string;
-          name: string;
+          client_name: string;
           company: string | null;
-          email: string | null;
           phone: string | null;
-          source: string | null;
+          email: string | null;
+          kind: Database["public"]["Enums"]["lead_kind"];
+          item_name: string | null;
+          frequency: Database["public"]["Enums"]["lead_frequency"];
           status: Database["public"]["Enums"]["lead_status"];
-          value: number;
+          source: string | null;
+          expected_value: number | null;
           assigned_to: string | null;
           created_by: string | null;
-          notes: string | null;
           next_follow_up: string | null;
+          notes: string | null;
+          import_batch_id: string | null;
           created_at: string;
           updated_at: string;
         };
         Insert: {
           id?: string;
-          name: string;
+          client_name: string;
           company?: string | null;
-          email?: string | null;
           phone?: string | null;
-          source?: string | null;
+          email?: string | null;
+          kind: Database["public"]["Enums"]["lead_kind"];
+          item_name?: string | null;
+          frequency: Database["public"]["Enums"]["lead_frequency"];
           status?: Database["public"]["Enums"]["lead_status"];
-          value?: number;
+          source?: string | null;
+          expected_value?: number | null;
           assigned_to?: string | null;
           created_by?: string | null;
-          notes?: string | null;
           next_follow_up?: string | null;
+          notes?: string | null;
+          import_batch_id?: string | null;
           created_at?: string;
           updated_at?: string;
         };
         Update: {
           id?: string;
-          name?: string;
+          client_name?: string;
           company?: string | null;
-          email?: string | null;
           phone?: string | null;
-          source?: string | null;
+          email?: string | null;
+          kind?: Database["public"]["Enums"]["lead_kind"];
+          item_name?: string | null;
+          frequency?: Database["public"]["Enums"]["lead_frequency"];
           status?: Database["public"]["Enums"]["lead_status"];
-          value?: number;
+          source?: string | null;
+          expected_value?: number | null;
           assigned_to?: string | null;
           created_by?: string | null;
-          notes?: string | null;
           next_follow_up?: string | null;
+          notes?: string | null;
+          import_batch_id?: string | null;
           created_at?: string;
           updated_at?: string;
         };
-        Relationships: [
-          {
-            foreignKeyName: "leads_assigned_to_fkey";
-            columns: ["assigned_to"];
-            isOneToOne: false;
-            referencedRelation: "profiles";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "leads_created_by_fkey";
-            columns: ["created_by"];
-            isOneToOne: false;
-            referencedRelation: "profiles";
-            referencedColumns: ["id"];
-          },
-        ];
+        Relationships: [];
+      };
+      lead_activity: {
+        Row: {
+          id: string;
+          lead_id: string;
+          actor_id: string | null;
+          action: string;
+          detail: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          lead_id: string;
+          actor_id?: string | null;
+          action: string;
+          detail?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          lead_id?: string;
+          actor_id?: string | null;
+          action?: string;
+          detail?: string | null;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
+      lead_import_batches: {
+        Row: {
+          id: string;
+          file_name: string | null;
+          row_count: number | null;
+          imported_by: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          file_name?: string | null;
+          row_count?: number | null;
+          imported_by?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          file_name?: string | null;
+          row_count?: number | null;
+          imported_by?: string | null;
+          created_at?: string;
+        };
+        Relationships: [];
       };
       sales: {
         Row: {
           id: string;
           lead_id: string | null;
-          member_id: string | null;
-          customer_name: string;
-          amount: number;
-          received_amount: number;
-          payment_status: Database["public"]["Enums"]["payment_status"];
+          client_name: string;
+          service_sold: string | null;
           sale_date: string;
+          total_amount: number;
+          received_amount: number;
+          remaining_amount: number | null;
+          payment_status: Database["public"]["Enums"]["payment_status"];
+          is_upgrade: boolean;
+          upgrade_from_sale_id: string | null;
+          sold_by: string | null;
           notes: string | null;
           created_at: string;
-          updated_at: string;
         };
         Insert: {
           id?: string;
           lead_id?: string | null;
-          member_id?: string | null;
-          customer_name: string;
-          amount?: number;
+          client_name: string;
+          service_sold?: string | null;
+          sale_date: string;
+          total_amount: number;
           received_amount?: number;
+          remaining_amount?: number | null;
           payment_status?: Database["public"]["Enums"]["payment_status"];
-          sale_date?: string;
+          is_upgrade?: boolean;
+          upgrade_from_sale_id?: string | null;
+          sold_by?: string | null;
           notes?: string | null;
           created_at?: string;
-          updated_at?: string;
         };
         Update: {
           id?: string;
           lead_id?: string | null;
-          member_id?: string | null;
-          customer_name?: string;
-          amount?: number;
-          received_amount?: number;
-          payment_status?: Database["public"]["Enums"]["payment_status"];
+          client_name?: string;
+          service_sold?: string | null;
           sale_date?: string;
+          total_amount?: number;
+          received_amount?: number;
+          remaining_amount?: number | null;
+          payment_status?: Database["public"]["Enums"]["payment_status"];
+          is_upgrade?: boolean;
+          upgrade_from_sale_id?: string | null;
+          sold_by?: string | null;
           notes?: string | null;
           created_at?: string;
-          updated_at?: string;
         };
-        Relationships: [
-          {
-            foreignKeyName: "sales_lead_id_fkey";
-            columns: ["lead_id"];
-            isOneToOne: false;
-            referencedRelation: "leads";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "sales_member_id_fkey";
-            columns: ["member_id"];
-            isOneToOne: false;
-            referencedRelation: "profiles";
-            referencedColumns: ["id"];
-          },
-        ];
+        Relationships: [];
       };
       payments: {
         Row: {
           id: string;
           sale_id: string;
           amount: number;
-          method: string | null;
-          paid_at: string;
-          notes: string | null;
-          recorded_by: string | null;
-          created_at: string;
+          paid_on: string;
+          mode: string | null;
+          note: string | null;
+          added_by: string | null;
         };
         Insert: {
           id?: string;
           sale_id: string;
           amount: number;
-          method?: string | null;
-          paid_at?: string;
-          notes?: string | null;
-          recorded_by?: string | null;
-          created_at?: string;
+          paid_on?: string;
+          mode?: string | null;
+          note?: string | null;
+          added_by?: string | null;
         };
         Update: {
           id?: string;
           sale_id?: string;
           amount?: number;
-          method?: string | null;
-          paid_at?: string;
-          notes?: string | null;
-          recorded_by?: string | null;
-          created_at?: string;
+          paid_on?: string;
+          mode?: string | null;
+          note?: string | null;
+          added_by?: string | null;
         };
-        Relationships: [
-          {
-            foreignKeyName: "payments_sale_id_fkey";
-            columns: ["sale_id"];
-            isOneToOne: false;
-            referencedRelation: "sales";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "payments_recorded_by_fkey";
-            columns: ["recorded_by"];
-            isOneToOne: false;
-            referencedRelation: "profiles";
-            referencedColumns: ["id"];
-          },
-        ];
+        Relationships: [];
       };
       incentives: {
         Row: {
           id: string;
-          member_id: string;
-          sale_id: string | null;
+          user_id: string;
+          source: Database["public"]["Enums"]["incentive_source"];
           task_id: string | null;
+          sale_id: string | null;
           amount: number;
-          month: string | null;
-          notes: string | null;
+          month: string;
+          note: string | null;
+          created_by: string | null;
           created_at: string;
         };
         Insert: {
           id?: string;
-          member_id: string;
-          sale_id?: string | null;
+          user_id: string;
+          source: Database["public"]["Enums"]["incentive_source"];
           task_id?: string | null;
-          amount?: number;
-          month?: string | null;
-          notes?: string | null;
+          sale_id?: string | null;
+          amount: number;
+          month: string;
+          note?: string | null;
+          created_by?: string | null;
           created_at?: string;
         };
         Update: {
           id?: string;
-          member_id?: string;
-          sale_id?: string | null;
+          user_id?: string;
+          source?: Database["public"]["Enums"]["incentive_source"];
           task_id?: string | null;
+          sale_id?: string | null;
           amount?: number;
-          month?: string | null;
-          notes?: string | null;
+          month?: string;
+          note?: string | null;
+          created_by?: string | null;
           created_at?: string;
         };
-        Relationships: [
-          {
-            foreignKeyName: "incentives_member_id_fkey";
-            columns: ["member_id"];
-            isOneToOne: false;
-            referencedRelation: "profiles";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "incentives_sale_id_fkey";
-            columns: ["sale_id"];
-            isOneToOne: false;
-            referencedRelation: "sales";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "incentives_task_id_fkey";
-            columns: ["task_id"];
-            isOneToOne: false;
-            referencedRelation: "tasks";
-            referencedColumns: ["id"];
-          },
-        ];
+        Relationships: [];
+      };
+      targets: {
+        Row: {
+          id: string;
+          user_id: string;
+          month: string;
+          target_amount: number;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          month: string;
+          target_amount: number;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          month?: string;
+          target_amount?: number;
+        };
+        Relationships: [];
       };
       notifications: {
         Row: {
           id: string;
           user_id: string;
           title: string;
-          message: string | null;
-          type: string | null;
+          body: string | null;
           link: string | null;
           is_read: boolean;
           created_at: string;
@@ -394,8 +422,7 @@ export type Database = {
           id?: string;
           user_id: string;
           title: string;
-          message?: string | null;
-          type?: string | null;
+          body?: string | null;
           link?: string | null;
           is_read?: boolean;
           created_at?: string;
@@ -404,104 +431,60 @@ export type Database = {
           id?: string;
           user_id?: string;
           title?: string;
-          message?: string | null;
-          type?: string | null;
+          body?: string | null;
           link?: string | null;
           is_read?: boolean;
           created_at?: string;
         };
-        Relationships: [
-          {
-            foreignKeyName: "notifications_user_id_fkey";
-            columns: ["user_id"];
-            isOneToOne: false;
-            referencedRelation: "profiles";
-            referencedColumns: ["id"];
-          },
-        ];
-      };
-      targets: {
-        Row: {
-          id: string;
-          member_id: string;
-          month: string;
-          sales_target: number;
-          leads_target: number;
-          tasks_target: number;
-          created_at: string;
-          updated_at: string;
-        };
-        Insert: {
-          id?: string;
-          member_id: string;
-          month: string;
-          sales_target?: number;
-          leads_target?: number;
-          tasks_target?: number;
-          created_at?: string;
-          updated_at?: string;
-        };
-        Update: {
-          id?: string;
-          member_id?: string;
-          month?: string;
-          sales_target?: number;
-          leads_target?: number;
-          tasks_target?: number;
-          created_at?: string;
-          updated_at?: string;
-        };
-        Relationships: [
-          {
-            foreignKeyName: "targets_member_id_fkey";
-            columns: ["member_id"];
-            isOneToOne: false;
-            referencedRelation: "profiles";
-            referencedColumns: ["id"];
-          },
-        ];
+        Relationships: [];
       };
     };
     Views: {
       member_stats: {
         Row: {
-          member_id: string | null;
+          user_id: string | null;
           full_name: string | null;
           role: Database["public"]["Enums"]["user_role"] | null;
-          tasks_total: number | null;
+          designation: string | null;
+          position: string | null;
+          dedicated_work: string | null;
+          avatar_url: string | null;
           tasks_completed: number | null;
-          leads_total: number | null;
-          leads_confirmed: number | null;
-          sales_total: number | null;
-          sales_revenue: number | null;
-          incentives_total: number | null;
+          tasks_pending: number | null;
+          tasks_total: number | null;
+          performance_pct: number | null;
         };
         Relationships: [];
       };
       target_progress: {
         Row: {
-          target_id: string | null;
-          member_id: string | null;
+          user_id: string | null;
           month: string | null;
-          sales_target: number | null;
-          sales_achieved: number | null;
-          leads_target: number | null;
-          leads_achieved: number | null;
-          tasks_target: number | null;
-          tasks_completed: number | null;
-          progress_percent: number | null;
+          target_amount: number | null;
+          achieved: number | null;
+          pct: number | null;
+          stage: string | null;
         };
         Relationships: [];
       };
       salary_monthly: {
         Row: {
-          member_id: string | null;
+          user_id: string | null;
+          full_name: string | null;
+          role: Database["public"]["Enums"]["user_role"] | null;
           month: string | null;
           base_salary: number | null;
-          daily_allowance: number | null;
-          incentives: number | null;
-          gross_salary: number | null;
-          sales_incentive_percent: number | null;
+          task_incentive: number | null;
+          sales_incentive: number | null;
+          manual_incentive: number | null;
+          bonus: number | null;
+          deduction: number | null;
+          total_salary: number | null;
+          payout_status: string | null;
+          target_amount: number | null;
+          achieved: number | null;
+          target_pct: number | null;
+          target_stage: string | null;
         };
         Relationships: [];
       };
@@ -509,15 +492,18 @@ export type Database = {
     Functions: Record<string, never>;
     Enums: {
       user_role: "owner" | "manager" | "employee" | "intern";
+      lead_kind: "product" | "service";
+      lead_frequency: "daily" | "weekly";
       lead_status:
         | "upcoming"
         | "pending"
         | "ongoing"
         | "confirmed"
         | "cancelled";
-      task_status: "todo" | "in_progress" | "completed" | "cancelled";
       task_type: "daily" | "weekly" | "one_time";
+      task_status: "todo" | "in_progress" | "completed" | "cancelled";
       payment_status: "pending" | "partial" | "paid";
+      incentive_source: "task" | "sale" | "manual";
     };
     CompositeTypes: Record<string, never>;
   };
@@ -602,3 +588,21 @@ export type Enums<
   : PublicEnumNameOrOptions extends keyof Database["public"]["Enums"]
     ? Database["public"]["Enums"][PublicEnumNameOrOptions]
     : never;
+
+export type Profile = Database["public"]["Tables"]["profiles"]["Row"];
+export type Task = Database["public"]["Tables"]["tasks"]["Row"];
+export type Lead = Database["public"]["Tables"]["leads"]["Row"];
+export type LeadActivity =
+  Database["public"]["Tables"]["lead_activity"]["Row"];
+export type LeadImportBatch =
+  Database["public"]["Tables"]["lead_import_batches"]["Row"];
+export type Sale = Database["public"]["Tables"]["sales"]["Row"];
+export type Payment = Database["public"]["Tables"]["payments"]["Row"];
+export type Incentive = Database["public"]["Tables"]["incentives"]["Row"];
+export type Target = Database["public"]["Tables"]["targets"]["Row"];
+export type SalaryConfig = Database["public"]["Tables"]["salary_config"]["Row"];
+export type SalaryPayout = Database["public"]["Tables"]["salary_payouts"]["Row"];
+export type Notification = Database["public"]["Tables"]["notifications"]["Row"];
+export type MemberStats = Database["public"]["Views"]["member_stats"]["Row"];
+export type TargetProgress = Database["public"]["Views"]["target_progress"]["Row"];
+export type SalaryMonthly = Database["public"]["Views"]["salary_monthly"]["Row"];

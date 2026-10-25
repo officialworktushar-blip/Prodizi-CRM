@@ -1,20 +1,17 @@
 import type { Metadata } from "next";
 import Image from "next/image";
-import Link from "next/link";
+import { Suspense } from "react";
 import {
-  ArrowRight,
-  CheckCircle2,
   Lock,
-  Mail,
   ShieldCheck,
   Target,
   TrendingUp,
   Users,
 } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
+
+import { LoginForm } from "./login-form";
 
 export const metadata: Metadata = {
   title: "Sign in",
@@ -27,7 +24,27 @@ const highlights = [
   { icon: Users, label: "One workspace for the whole team" },
 ];
 
-export default function LoginPage() {
+type LoginPageProps = {
+  searchParams: Promise<{ redirectTo?: string; reason?: string }>;
+};
+
+async function LoginFormWithParams({ searchParams }: LoginPageProps) {
+  const params = await searchParams;
+
+  return <LoginForm redirectTo={params.redirectTo} reason={params.reason} />;
+}
+
+function LoginFormSkeleton() {
+  return (
+    <div className="space-y-4" aria-hidden>
+      <Skeleton className="h-16 w-full rounded-lg" />
+      <Skeleton className="h-16 w-full rounded-lg" />
+      <Skeleton className="h-10 w-full rounded-lg" />
+    </div>
+  );
+}
+
+export default function LoginPage({ searchParams }: LoginPageProps) {
   return (
     <main className="grid min-h-svh lg:grid-cols-2">
       <section className="bg-brand-gradient relative hidden overflow-hidden p-10 lg:flex lg:flex-col lg:justify-between xl:p-14">
@@ -119,62 +136,9 @@ export default function LoginPage() {
               </p>
             </div>
 
-            <form className="space-y-4" aria-label="Sign in">
-              <div className="space-y-2">
-                <Label htmlFor="email">Email address</Label>
-                <div className="relative">
-                  <Mail className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    id="email"
-                    name="email"
-                    type="email"
-                    autoComplete="email"
-                    placeholder="you@prodigi.in"
-                    className="pl-9"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <div className="flex items-center justify-between gap-3">
-                  <Label htmlFor="password">Password</Label>
-                  <Link
-                    href="/login"
-                    className="text-xs font-medium text-primary underline-offset-4 hover:underline"
-                  >
-                    Forgot password?
-                  </Link>
-                </div>
-                <div className="relative">
-                  <Lock className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    id="password"
-                    name="password"
-                    type="password"
-                    autoComplete="current-password"
-                    placeholder="••••••••"
-                    className="pl-9"
-                  />
-                </div>
-              </div>
-
-              <Button type="button" className="h-10 w-full">
-                Sign in
-                <ArrowRight className="size-4" />
-              </Button>
-            </form>
-
-            <div className="mt-6 flex items-start gap-2 rounded-xl border bg-muted/40 p-3 text-xs text-muted-foreground">
-              <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-brand-green" />
-              <p>
-                Accounts are created by an owner or manager. Ask your
-                administrator if you need access.
-              </p>
-            </div>
-
-            <p className="mt-8 text-center text-xs text-muted-foreground">
-              © Prodigi. Internal use only.
-            </p>
+            <Suspense fallback={<LoginFormSkeleton />}>
+              <LoginFormWithParams searchParams={searchParams} />
+            </Suspense>
           </div>
         </div>
       </section>

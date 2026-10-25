@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Sparkles } from "lucide-react";
 
+import { useRole } from "@/hooks/use-role";
 import { NAV_ITEMS } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 
@@ -15,6 +16,10 @@ type SidebarContentProps = {
 
 export function SidebarContent({ className, onNavigate }: SidebarContentProps) {
   const pathname = usePathname();
+  const { role } = useRole();
+  const navItems = NAV_ITEMS.filter(
+    (item) => !item.roles || (role && item.roles.includes(role)),
+  );
 
   return (
     <div className={cn("flex h-full flex-col gap-6 p-4", className)}>
@@ -46,7 +51,7 @@ export function SidebarContent({ className, onNavigate }: SidebarContentProps) {
           Workspace
         </p>
         <ul className="space-y-1">
-          {NAV_ITEMS.map((item) => {
+          {navItems.map((item) => {
             const active =
               pathname === item.href ||
               (item.href !== "/dashboard" &&

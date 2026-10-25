@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
-import { Target } from "lucide-react";
 
-import { PagePlaceholder } from "@/components/shared/page-placeholder";
+import { LeadDetail } from "@/components/leads/lead-detail";
 
 export const metadata: Metadata = { title: "Lead" };
 export const instant = false;
@@ -13,12 +12,5 @@ export default async function LeadDetailPage({
 }) {
   const { id } = await params;
 
-  return (
-    <PagePlaceholder
-      title={`Lead #${id}`}
-      description="Contact details, follow-ups, linked task and conversion status."
-      icon={Target}
-      eyebrow="Pipeline"
-    />
-  );
+  return <LeadDetail leadId={id} />;
 }

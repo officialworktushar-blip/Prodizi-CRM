@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
-import { UserRound } from "lucide-react";
 
-import { PagePlaceholder } from "@/components/shared/page-placeholder";
+import { MemberDetail } from "@/components/team/member-detail";
 
 export const metadata: Metadata = { title: "Team member" };
 export const instant = false;
@@ -13,12 +12,5 @@ export default async function TeamMemberPage({
 }) {
   const { id } = await params;
 
-  return (
-    <PagePlaceholder
-      title={`Team member #${id}`}
-      description="Profile, targets, performance and salary configuration."
-      icon={UserRound}
-      eyebrow="Team"
-    />
-  );
+  return <MemberDetail memberId={id} />;
 }

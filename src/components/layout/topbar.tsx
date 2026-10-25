@@ -1,21 +1,23 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
 import {
-  Bell,
   ChevronDown,
+  Loader2,
   LogOut,
   Menu,
   Moon,
-  Search,
-  Settings,
   Sun,
   UserRound,
 } from "lucide-react";
+import { useState } from "react";
 
+import { GlobalSearch } from "@/components/layout/global-search";
+import { NotificationsMenu } from "@/components/layout/notifications-menu";
 import { SidebarContent } from "@/components/layout/sidebar";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -25,7 +27,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
 import {
   Sheet,
   SheetContent,
@@ -37,6 +38,10 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { useRole } from "@/hooks/use-role";
+import { ROLE_LABELS } from "@/lib/constants";
+import { createClient } from "@/lib/supabase/client";
+import { getInitials } from "@/lib/utils";
 
 function ThemeToggle() {
   const { resolvedTheme, setTheme } = useTheme();
@@ -60,6 +65,18 @@ function ThemeToggle() {
 }
 
 export function Topbar() {
+  const { profile, role } = useRole();
+  const router = useRouter();
+  const [signingOut, setSigningOut] = useState(false);
+
+  const signOut = async () => {
+    setSigningOut(true);
+    const supabase = createClient();
+    await supabase.auth.signOut();
+    router.replace("/login");
+    router.refresh();
+  };
+
   return (
     <header className="sticky top-0 z-30 flex h-16 items-center gap-2 border-b bg-background/85 px-4 backdrop-blur-md sm:px-6">
       <Sheet>
@@ -79,46 +96,12 @@ export function Topbar() {
         </SheetContent>
       </Sheet>
 
-      <form
-        className="relative ml-1 hidden w-full max-w-sm md:block"
-        onSubmit={(event) => event.preventDefault()}
-        role="search"
-      >
-        <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          type="search"
-          placeholder="Search leads, tasks, team..."
-          aria-label="Search"
-          className="h-9 bg-muted/50 pl-9"
-        />
-      </form>
+      <GlobalSearch />
 
       <div className="ml-auto flex items-center gap-1.5">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="md:hidden"
-          aria-label="Search"
-        >
-          <Search className="size-4" />
-        </Button>
-
         <ThemeToggle />
 
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="relative"
-              aria-label="Notifications"
-            >
-              <Bell className="size-4" />
-              <span className="absolute top-2 right-2 size-1.5 rounded-full bg-brand-red ring-2 ring-background" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>Notifications</TooltipContent>
-        </Tooltip>
+        {profile ? <NotificationsMenu userId={profile.id} /> : null}
 
         <div className="mx-1 h-6 w-px bg-border" />
 
@@ -129,21 +112,29 @@ export function Topbar() {
               className="h-9 gap-2 rounded-xl px-1.5 sm:pr-2.5"
             >
               <Avatar className="size-7">
+                {profile?.avatar_url ? (
+                  <AvatarImage
+                    src={profile.avatar_url}
+                    alt={profile.full_name}
+                  />
+                ) : null}
                 <AvatarFallback className="bg-brand-gradient text-[0.7rem] font-semibold text-white">
-                  PR
+                  {getInitials(profile?.full_name)}
                 </AvatarFallback>
               </Avatar>
-              <span className="hidden text-sm font-medium sm:inline">
-                Account
+              <span className="hidden max-w-32 truncate text-sm font-medium sm:inline">
+                {profile?.full_name.split(" ")[0] ?? "Account"}
               </span>
               <ChevronDown className="hidden size-3.5 text-muted-foreground sm:inline" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56">
             <DropdownMenuLabel className="flex flex-col gap-0.5">
-              <span>Prodigi account</span>
+              <span className="truncate">
+                {profile?.full_name ?? "Prodigi account"}
+              </span>
               <span className="text-xs font-normal text-muted-foreground">
-                Signed in
+                {role ? ROLE_LABELS[role] : "Signed in"}
               </span>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
@@ -153,13 +144,16 @@ export function Topbar() {
                 Profile
               </Link>
             </DropdownMenuItem>
-            <DropdownMenuItem disabled>
-              <Settings className="size-4" />
-              Settings
-            </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem disabled>
-              <LogOut className="size-4" />
+            <DropdownMenuItem
+              disabled={signingOut}
+              onClick={() => void signOut()}
+            >
+              {signingOut ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <LogOut className="size-4" />
+              )}
               Sign out
             </DropdownMenuItem>
           </DropdownMenuContent>

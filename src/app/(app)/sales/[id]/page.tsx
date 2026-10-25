@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
-import { IndianRupee } from "lucide-react";
 
-import { PagePlaceholder } from "@/components/shared/page-placeholder";
+import { SaleDetail } from "@/components/sales/sale-detail";
 
 export const metadata: Metadata = { title: "Sale" };
 export const instant = false;
@@ -13,12 +12,5 @@ export default async function SaleDetailPage({
 }) {
   const { id } = await params;
 
-  return (
-    <PagePlaceholder
-      title={`Sale #${id}`}
-      description="Deal value, payment history and linked incentives."
-      icon={IndianRupee}
-      eyebrow="Revenue"
-    />
-  );
+  return <SaleDetail saleId={id} />;
 }

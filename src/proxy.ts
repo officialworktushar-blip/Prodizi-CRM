@@ -2,7 +2,14 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { updateSession } from "@/lib/supabase/middleware";
 
-const AUTH_ROUTES = ["/login", "/forgot-password", "/reset-password"];
+const AUTH_ROUTES = [
+  "/login",
+  "/forgot-password",
+  "/reset-password",
+  "/auth/callback",
+];
+
+const REDIRECT_WHEN_AUTHENTICATED = ["/login", "/forgot-password"];
 
 function isAuthRoute(pathname: string) {
   return AUTH_ROUTES.some(
@@ -52,7 +59,11 @@ export async function proxy(request: NextRequest) {
     }
   }
 
-  if (authRoute) {
+  if (
+    REDIRECT_WHEN_AUTHENTICATED.some(
+      (route) => pathname === route || pathname.startsWith(`${route}/`),
+    )
+  ) {
     return NextResponse.redirect(new URL("/dashboard", request.url));
   }
 
