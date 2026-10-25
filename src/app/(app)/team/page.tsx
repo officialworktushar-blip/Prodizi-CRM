@@ -3,6 +3,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BriefcaseBusiness,
+  LayoutGrid,
+  List,
   Mail,
   Phone,
   Plus,
@@ -59,12 +61,14 @@ import { createClient } from "@/lib/supabase/client";
 import {
   formatPercent,
   getInitials,
+  monthStartISO,
   toNumber,
 } from "@/lib/utils";
 import type {
   MemberStats,
   Profile,
   SalaryConfig,
+  Target,
 } from "@/types/database";
 
 export default function TeamPage() {
@@ -73,6 +77,7 @@ export default function TeamPage() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState<"all" | Role>("all");
+  const [view, setView] = useState<"grid" | "table">("grid");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingMember, setEditingMember] = useState<Profile | null>(null);
 
@@ -114,6 +119,20 @@ export default function TeamPage() {
     },
   });
 
+  const targetQuery = useQuery({
+    queryKey: ["targets", "team", monthStartISO()],
+    enabled: role === "owner",
+    queryFn: async () => {
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from("targets")
+        .select("*")
+        .eq("month", monthStartISO());
+      if (error) throw error;
+      return (data ?? []) as Target[];
+    },
+  });
+
   const toggleMutation = useMutation({
     mutationFn: async (member: Profile) => {
       const supabase = createClient();
@@ -145,6 +164,13 @@ export default function TeamPage() {
   const salaryMap = useMemo(
     () => new Map((salaryQuery.data ?? []).map((item) => [item.user_id, item])),
     [salaryQuery.data],
+  );
+  const targetMap = useMemo(
+    () =>
+      new Map(
+        (targetQuery.data ?? []).map((item) => [item.user_id, item.target_amount]),
+      ),
+    [targetQuery.data],
   );
 
   const filteredMembers = useMemo(() => {
@@ -301,6 +327,24 @@ export default function TeamPage() {
                 ))}
               </SelectContent>
             </Select>
+            <div className="flex rounded-lg border p-0.5">
+              <Button
+                variant={view === "grid" ? "secondary" : "ghost"}
+                size="icon-sm"
+                onClick={() => setView("grid")}
+                aria-label="Grid view"
+              >
+                <LayoutGrid className="size-4" />
+              </Button>
+              <Button
+                variant={view === "table" ? "secondary" : "ghost"}
+                size="icon-sm"
+                onClick={() => setView("table")}
+                aria-label="Table view"
+              >
+                <List className="size-4" />
+              </Button>
+            </div>
           </div>
 
           {profilesQuery.error ? (
@@ -320,13 +364,81 @@ export default function TeamPage() {
               title="No matching members"
               description="Try a different role or search term."
             />
+          ) : view === "grid" ? (
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {filteredMembers.map((member) => {
+                const memberStats = statsMap.get(member.id);
+                return (
+                  <Link
+                    key={member.id}
+                    href={`/team/${member.id}`}
+                    className="rounded-xl border bg-card p-4 transition-colors hover:bg-muted/40"
+                  >
+                    <div className="flex items-start gap-3">
+                      <Avatar className="size-11">
+                        {member.avatar_url ? (
+                          <AvatarImage
+                            src={member.avatar_url}
+                            alt={member.full_name}
+                          />
+                        ) : null}
+                        <AvatarFallback className="bg-brand-gradient text-sm font-semibold text-white">
+                          {getInitials(member.full_name)}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate font-medium">
+                          {member.full_name}
+                        </p>
+                        <p className="truncate text-xs text-muted-foreground">
+                          {member.designation || member.position || "Team member"}
+                        </p>
+                      </div>
+                      <Badge variant="secondary">
+                        {ROLE_LABELS[member.role]}
+                      </Badge>
+                    </div>
+                    <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                      <div>
+                        <p className="text-muted-foreground">Position</p>
+                        <p className="truncate font-medium">
+                          {member.position || "Not set"}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground">Work</p>
+                        <p className="truncate font-medium">
+                          {member.dedicated_work || "Not set"}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="mt-3">
+                      <div className="mb-1 flex justify-between text-xs">
+                        <span className="text-muted-foreground">
+                          {memberStats?.tasks_completed ?? 0} done ·{" "}
+                          {memberStats?.tasks_pending ?? 0} pending
+                        </span>
+                        <span className="font-medium">
+                          {formatPercent(memberStats?.performance_pct)}
+                        </span>
+                      </div>
+                      <Progress
+                        value={toNumber(memberStats?.performance_pct)}
+                        className="[&_[data-slot=progress-indicator]]:bg-brand-gradient"
+                      />
+                    </div>
+                  </Link>
+                );
+              })}
+            </div>
           ) : (
             <div className="overflow-x-auto">
-              <Table className="min-w-[880px]">
+              <Table className="min-w-[1020px]">
                 <TableHeader>
                   <TableRow>
                     <TableHead>Member</TableHead>
                     <TableHead>Role</TableHead>
+                    <TableHead>Position / Work</TableHead>
                     <TableHead>Contact</TableHead>
                     <TableHead>Tasks</TableHead>
                     <TableHead>Performance</TableHead>
@@ -378,6 +490,14 @@ export default function TeamPage() {
                           <Badge variant="secondary">
                             {ROLE_LABELS[member.role]}
                           </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <p className="text-sm font-medium">
+                            {member.position || "—"}
+                          </p>
+                          <p className="max-w-[180px] truncate text-xs text-muted-foreground">
+                            {member.dedicated_work || "No dedicated work"}
+                          </p>
                         </TableCell>
                         <TableCell>
                           <div className="space-y-1 text-xs">
@@ -487,6 +607,10 @@ export default function TeamPage() {
         salaryConfig={
           editingMember ? salaryMap.get(editingMember.id) ?? null : null
         }
+        monthlyTarget={
+          editingMember ? targetMap.get(editingMember.id) ?? null : null
+        }
+        managers={members}
         actorRole={role ?? "employee"}
       />
     </div>

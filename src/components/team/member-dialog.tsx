@@ -38,6 +38,8 @@ type MemberDialogProps = {
   onOpenChange: (open: boolean) => void;
   member?: Profile | null;
   salaryConfig?: SalaryConfig | null;
+  monthlyTarget?: number | null;
+  managers?: Profile[];
   actorRole: Role;
 };
 
@@ -46,6 +48,8 @@ export function MemberDialog({
   onOpenChange,
   member,
   salaryConfig,
+  monthlyTarget,
+  managers = [],
   actorRole,
 }: MemberDialogProps) {
   const queryClient = useQueryClient();
@@ -61,6 +65,7 @@ export function MemberDialog({
   const [dedicatedWork, setDedicatedWork] = useState(
     member?.dedicated_work ?? "",
   );
+  const [managerId, setManagerId] = useState(member?.manager_id ?? "");
   const [joinedOn, setJoinedOn] = useState(
     member?.joined_on ?? format(new Date(), "yyyy-MM-dd"),
   );
@@ -70,12 +75,16 @@ export function MemberDialog({
   const [salesPercent, setSalesPercent] = useState(
     String(salaryConfig?.sales_incentive_percent ?? 0),
   );
+  const [target, setTarget] = useState(String(monthlyTarget ?? 0));
   const [isActive, setIsActive] = useState(member?.is_active ?? true);
 
   const allowedRoles =
     actorRole === "owner"
       ? ROLES
       : ROLES.filter((item) => item === "employee" || item === "intern");
+  const requiresWorkDetails = role === "employee" || role === "intern";
+  const missingWorkDetails =
+    requiresWorkDetails && (!dedicatedWork.trim() || !position.trim());
 
   const mutation = useMutation({
     mutationFn: async (event: FormEvent<HTMLFormElement>) => {
@@ -94,9 +103,11 @@ export function MemberDialog({
             designation: designation.trim() || null,
             position: position.trim() || null,
             dedicated_work: dedicatedWork.trim() || null,
+            manager_id: managerId || null,
             joined_on: joinedOn || null,
             base_salary: Number(baseSalary) || 0,
             sales_incentive_percent: Number(salesPercent) || 0,
+            monthly_target: Number(target) || 0,
           }),
         });
         const payload = (await response.json()) as {
@@ -118,6 +129,8 @@ export function MemberDialog({
           designation: designation.trim() || null,
           position: position.trim() || null,
           dedicated_work: dedicatedWork.trim() || null,
+          manager_id:
+            actorRole === "owner" ? managerId || null : member.manager_id,
           joined_on: joinedOn || null,
           is_active: isActive,
         })
@@ -133,6 +146,28 @@ export function MemberDialog({
             sales_incentive_percent: Number(salesPercent) || 0,
           });
         if (salaryError) throw salaryError;
+
+        const targetMonth = format(new Date(), "yyyy-MM-01");
+        const { data: existingTarget, error: targetLookupError } = await supabase
+          .from("targets")
+          .select("id")
+          .eq("user_id", member.id)
+          .eq("month", targetMonth)
+          .maybeSingle();
+        if (targetLookupError) throw targetLookupError;
+
+        const targetPayload = {
+          user_id: member.id,
+          month: targetMonth,
+          target_amount: Number(target) || 0,
+        };
+        const { error: targetError } = existingTarget
+          ? await supabase
+              .from("targets")
+              .update(targetPayload)
+              .eq("id", existingTarget.id)
+          : await supabase.from("targets").insert(targetPayload);
+        if (targetError) throw targetError;
       }
     },
     onSuccess: () => {
@@ -140,6 +175,7 @@ export function MemberDialog({
       void queryClient.invalidateQueries({ queryKey: ["profiles"] });
       void queryClient.invalidateQueries({ queryKey: ["member-stats"] });
       void queryClient.invalidateQueries({ queryKey: ["salary"] });
+      void queryClient.invalidateQueries({ queryKey: ["targets"] });
       void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       onOpenChange(false);
     },
@@ -225,6 +261,36 @@ export function MemberDialog({
                 </SelectContent>
               </Select>
             </div>
+            {actorRole === "owner" ? (
+              <div className="space-y-2">
+                <Label>Reporting manager</Label>
+                <Select
+                  value={managerId || "none"}
+                  onValueChange={(value) =>
+                    setManagerId(value === "none" ? "" : value)
+                  }
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="No manager" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No manager</SelectItem>
+                    {managers
+                      .filter(
+                        (item) =>
+                          item.is_active &&
+                          (item.role === "owner" || item.role === "manager") &&
+                          item.id !== member?.id,
+                      )
+                      .map((item) => (
+                        <SelectItem key={item.id} value={item.id}>
+                          {item.full_name}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : null}
             <div className="space-y-2">
               <Label htmlFor="member-designation">Designation</Label>
               <Input
@@ -235,12 +301,19 @@ export function MemberDialog({
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="member-position">Position</Label>
+              <Label htmlFor="member-position">
+                Position
+                {requiresWorkDetails ? (
+                  <span className="text-brand-red"> *</span>
+                ) : null}
+              </Label>
               <Input
                 id="member-position"
                 value={position}
                 onChange={(event) => setPosition(event.target.value)}
                 placeholder="Senior"
+                required={requiresWorkDetails}
+                aria-invalid={requiresWorkDetails && !position.trim()}
               />
             </div>
             <div className="space-y-2">
@@ -255,12 +328,19 @@ export function MemberDialog({
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="member-work">Dedicated work</Label>
+            <Label htmlFor="member-work">
+              Dedicated work
+              {requiresWorkDetails ? (
+                <span className="text-brand-red"> *</span>
+              ) : null}
+            </Label>
             <Input
               id="member-work"
               value={dedicatedWork}
               onChange={(event) => setDedicatedWork(event.target.value)}
               placeholder="Inbound sales, client success..."
+              required={requiresWorkDetails}
+              aria-invalid={requiresWorkDetails && !dedicatedWork.trim()}
             />
           </div>
 
@@ -287,6 +367,17 @@ export function MemberDialog({
                   step="0.1"
                   value={salesPercent}
                   onChange={(event) => setSalesPercent(event.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="member-target">Monthly target (₹)</Label>
+                <Input
+                  id="member-target"
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={target}
+                  onChange={(event) => setTarget(event.target.value)}
                 />
               </div>
             </div>
@@ -321,6 +412,7 @@ export function MemberDialog({
               disabled={
                 mutation.isPending ||
                 !fullName.trim() ||
+                missingWorkDetails ||
                 (!member && (!email.trim() || password.length < 8))
               }
             >

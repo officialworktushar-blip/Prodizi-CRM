@@ -16,6 +16,7 @@ import Link from "next/link";
 import { useState, type FormEvent } from "react";
 import { toast } from "sonner";
 
+import { LeadConfirmDialog } from "@/components/leads/lead-confirm-dialog";
 import { LeadDialog } from "@/components/leads/lead-dialog";
 import { EmptyState } from "@/components/shared/empty-state";
 import { ErrorState } from "@/components/shared/error-state";
@@ -72,6 +73,7 @@ export function LeadDetail({ leadId }: { leadId: string }) {
   const queryClient = useQueryClient();
   const isAdmin = isAdminRole(role);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [note, setNote] = useState("");
 
   const leadQuery = useQuery({
@@ -120,16 +122,28 @@ export function LeadDetail({ leadId }: { leadId: string }) {
   });
 
   const statusMutation = useMutation({
-    mutationFn: async (status: LeadStatus) => {
+    mutationFn: async ({
+      status,
+      amount,
+    }: {
+      status: LeadStatus;
+      amount?: number;
+    }) => {
       const supabase = createClient();
       const { error } = await supabase
         .from("leads")
-        .update({ status })
+        .update({
+          status,
+          ...(status === "confirmed" && amount !== undefined
+            ? { expected_value: amount }
+            : {}),
+        })
         .eq("id", leadId);
       if (error) throw error;
     },
     onSuccess: () => {
       toast.success("Lead status updated");
+      setConfirmOpen(false);
       void queryClient.invalidateQueries({ queryKey: ["leads"] });
       void queryClient.invalidateQueries({ queryKey: ["tasks"] });
       void queryClient.invalidateQueries({ queryKey: ["sales"] });
@@ -210,6 +224,15 @@ export function LeadDetail({ leadId }: { leadId: string }) {
     (lead.assigned_to === profile?.id ? profile : undefined);
   const canEdit = profile ? canEditLead(role, profile.id, lead) : false;
 
+  const handleStatusChange = (status: LeadStatus) => {
+    if (!canEdit || status === lead.status) return;
+    if (status === "confirmed") {
+      setConfirmOpen(true);
+      return;
+    }
+    statusMutation.mutate({ status });
+  };
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -231,6 +254,54 @@ export function LeadDetail({ leadId }: { leadId: string }) {
         }
       />
 
+      <Card>
+        <CardContent className="overflow-x-auto py-4">
+          <div className="flex min-w-[600px] items-start">
+            {LEAD_STATUSES.map((status, index) => (
+              <div key={status} className="contents">
+                {index > 0 ? (
+                  <div
+                    className={`mt-3.5 h-0.5 flex-1 ${
+                      LEAD_STATUSES.indexOf(lead.status as LeadStatus) >= index
+                        ? "bg-brand-blue"
+                        : "bg-border"
+                    }`}
+                  />
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => handleStatusChange(status)}
+                  disabled={!canEdit || statusMutation.isPending}
+                  className="flex w-24 shrink-0 flex-col items-center gap-1.5 disabled:cursor-default"
+                >
+                  <span
+                    className={`flex size-7 items-center justify-center rounded-full border text-xs font-semibold ${
+                      lead.status === status
+                        ? "border-brand-blue bg-brand-blue text-white"
+                        : LEAD_STATUSES.indexOf(lead.status as LeadStatus) >
+                            index
+                          ? "border-brand-blue bg-brand-blue/10 text-brand-blue"
+                          : "border-border bg-card text-muted-foreground"
+                    }`}
+                  >
+                    {index + 1}
+                  </span>
+                  <span
+                    className={`text-xs ${
+                      lead.status === status
+                        ? "font-medium text-foreground"
+                        : "text-muted-foreground"
+                    }`}
+                  >
+                    {LEAD_STATUS_LABELS[status]}
+                  </span>
+                </button>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <CardHeader className="flex-row items-start justify-between gap-3">
@@ -246,7 +317,7 @@ export function LeadDetail({ leadId }: { leadId: string }) {
                 <Select
                   value={lead.status}
                   onValueChange={(value) =>
-                    statusMutation.mutate(value as LeadStatus)
+                    handleStatusChange(value as LeadStatus)
                   }
                   disabled={statusMutation.isPending}
                 >
@@ -526,6 +597,17 @@ export function LeadDetail({ leadId }: { leadId: string }) {
           canAssign={isAdmin}
         />
       ) : null}
+
+      <LeadConfirmDialog
+        key={`confirm-${confirmOpen ? lead.id : "closed"}`}
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        lead={lead}
+        pending={statusMutation.isPending}
+        onConfirm={(amount) =>
+          statusMutation.mutate({ status: "confirmed", amount })
+        }
+      />
     </div>
   );
 }

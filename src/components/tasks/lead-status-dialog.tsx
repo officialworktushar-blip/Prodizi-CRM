@@ -12,6 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -33,7 +34,7 @@ type LeadStatusDialogProps = {
   task: Task | null;
   lead: Lead | undefined;
   pending: boolean;
-  onConfirm: (status: LeadStatus) => void;
+  onConfirm: (status: LeadStatus, amount?: number) => void;
 };
 
 export function LeadStatusDialog({
@@ -47,6 +48,9 @@ export function LeadStatusDialog({
   const [leadStatus, setLeadStatus] = useState<LeadStatus>(
     (lead?.status as LeadStatus | undefined) ?? "ongoing",
   );
+  const [amount, setAmount] = useState(String(lead?.expected_value ?? ""));
+  const invalidAmount =
+    leadStatus === "confirmed" && (!amount || Number(amount) <= 0);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -76,6 +80,20 @@ export function LeadStatusDialog({
               ))}
             </SelectContent>
           </Select>
+          {leadStatus === "confirmed" ? (
+            <div className="space-y-2">
+              <Label htmlFor="task-deal-amount">Total deal amount (₹)</Label>
+              <Input
+                id="task-deal-amount"
+                type="number"
+                min="0"
+                step="1"
+                value={amount}
+                onChange={(event) => setAmount(event.target.value)}
+                placeholder="50000"
+              />
+            </div>
+          ) : null}
         </div>
         <DialogFooter>
           <Button
@@ -88,8 +106,13 @@ export function LeadStatusDialog({
           </Button>
           <Button
             type="button"
-            onClick={() => onConfirm(leadStatus)}
-            disabled={pending}
+            onClick={() =>
+              onConfirm(
+                leadStatus,
+                leadStatus === "confirmed" ? Number(amount) : undefined,
+              )
+            }
+            disabled={pending || invalidAmount}
           >
             {pending ? <Loader2 className="size-4 animate-spin" /> : null}
             Complete task

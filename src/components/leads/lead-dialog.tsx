@@ -81,6 +81,8 @@ export function LeadDialog({
     lead?.next_follow_up?.slice(0, 10) ?? "",
   );
   const [notes, setNotes] = useState(lead?.notes ?? "");
+  const missingConfirmedAmount =
+    status === "confirmed" && (!expectedValue || Number(expectedValue) <= 0);
 
   const mutation = useMutation({
     mutationFn: async (event: FormEvent<HTMLFormElement>) => {
@@ -254,7 +256,11 @@ export function LeadDialog({
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="lead-value">Expected value (₹)</Label>
+              <Label htmlFor="lead-value">
+                {status === "confirmed"
+                  ? "Total deal amount (₹)"
+                  : "Expected value (₹)"}
+              </Label>
               <Input
                 id="lead-value"
                 type="number"
@@ -263,6 +269,7 @@ export function LeadDialog({
                 value={expectedValue}
                 onChange={(event) => setExpectedValue(event.target.value)}
                 placeholder="50000"
+                aria-invalid={missingConfirmedAmount}
               />
             </div>
             <div className="space-y-2">
@@ -325,7 +332,11 @@ export function LeadDialog({
             </Button>
             <Button
               type="submit"
-              disabled={mutation.isPending || !clientName.trim()}
+              disabled={
+                mutation.isPending ||
+                !clientName.trim() ||
+                missingConfirmedAmount
+              }
             >
               {mutation.isPending ? (
                 <Loader2 className="size-4 animate-spin" />

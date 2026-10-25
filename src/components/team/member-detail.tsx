@@ -46,11 +46,14 @@ import {
   toNumber,
 } from "@/lib/utils";
 import type {
+  Incentive,
   Lead,
   MemberStats,
   Profile,
+  Sale,
   SalaryConfig,
   SalaryMonthly,
+  Target as TargetRecord,
   Task,
 } from "@/types/database";
 
@@ -79,42 +82,65 @@ export function MemberDetail({ memberId }: { memberId: string }) {
     enabled: Boolean(memberQuery.data),
     queryFn: async () => {
       const supabase = createClient();
-      const [stats, tasks, leads, config, salary] = await Promise.all([
-        supabase
-          .from("member_stats")
-          .select("*")
-          .eq("user_id", memberId)
-          .maybeSingle(),
-        supabase
-          .from("tasks")
-          .select("*")
-          .eq("assigned_to", memberId)
-          .order("created_at", { ascending: false })
-          .limit(10),
-        supabase
-          .from("leads")
-          .select("*")
-          .eq("assigned_to", memberId)
-          .order("created_at", { ascending: false })
-          .limit(10),
-        supabase
-          .from("salary_config")
-          .select("*")
-          .eq("user_id", memberId)
-          .maybeSingle(),
-        supabase
-          .from("salary_monthly")
-          .select("*")
-          .eq("user_id", memberId)
-          .eq("month", month)
-          .maybeSingle(),
-      ]);
+      const [stats, tasks, leads, config, salary, sales, incentives, target, profiles] =
+        await Promise.all([
+          supabase
+            .from("member_stats")
+            .select("*")
+            .eq("user_id", memberId)
+            .maybeSingle(),
+          supabase
+            .from("tasks")
+            .select("*")
+            .eq("assigned_to", memberId)
+            .order("created_at", { ascending: false })
+            .limit(200),
+          supabase
+            .from("leads")
+            .select("*")
+            .eq("assigned_to", memberId)
+            .order("created_at", { ascending: false })
+            .limit(10),
+          supabase
+            .from("salary_config")
+            .select("*")
+            .eq("user_id", memberId)
+            .maybeSingle(),
+          supabase
+            .from("salary_monthly")
+            .select("*")
+            .eq("user_id", memberId)
+            .eq("month", month)
+            .maybeSingle(),
+          supabase
+            .from("sales")
+            .select("*")
+            .eq("sold_by", memberId)
+            .order("sale_date", { ascending: false })
+            .limit(10),
+          supabase
+            .from("incentives")
+            .select("*")
+            .eq("user_id", memberId)
+            .order("created_at", { ascending: false })
+            .limit(10),
+          supabase
+            .from("targets")
+            .select("*")
+            .eq("user_id", memberId)
+            .eq("month", month)
+            .maybeSingle(),
+          supabase.from("profiles").select("*").order("full_name"),
+        ]);
       const error =
         stats.error ??
         tasks.error ??
         leads.error ??
         config.error ??
-        salary.error;
+        salary.error ??
+        sales.error ??
+        incentives.error ??
+        profiles.error;
       if (error) throw error;
 
       return {
@@ -123,6 +149,10 @@ export function MemberDetail({ memberId }: { memberId: string }) {
         leads: (leads.data ?? []) as Lead[],
         config: (config.data as SalaryConfig | null) ?? null,
         salary: (salary.data as SalaryMonthly | null) ?? null,
+        sales: (sales.data ?? []) as Sale[],
+        incentives: (incentives.data ?? []) as Incentive[],
+        target: (target.data as TargetRecord | null) ?? null,
+        profiles: (profiles.data ?? []) as Profile[],
       };
     },
   });
@@ -183,7 +213,36 @@ export function MemberDetail({ memberId }: { memberId: string }) {
   const leads = relatedQuery.data?.leads ?? [];
   const config = relatedQuery.data?.config ?? null;
   const salary = relatedQuery.data?.salary ?? null;
+  const sales = relatedQuery.data?.sales ?? [];
+  const incentives = relatedQuery.data?.incentives ?? [];
+  const target = relatedQuery.data?.target ?? null;
+  const profiles = relatedQuery.data?.profiles ?? [];
+  const manager = profiles.find((item) => item.id === member.manager_id);
   const showSalary = role === "owner" || role === "manager";
+  const monthKeys = Array.from({ length: 6 }).map((_, index) => {
+    const date = new Date();
+    date.setMonth(date.getMonth() - (5 - index));
+    return {
+      key: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`,
+      label: date.toLocaleDateString("en-IN", { month: "short" }),
+    };
+  });
+  const chartData = monthKeys.map((item) => ({
+    ...item,
+    completed: tasks.filter(
+      (task) =>
+        task.completed_at && task.completed_at.slice(0, 7) === item.key,
+    ).length,
+  }));
+  const chartMax = Math.max(1, ...chartData.map((item) => item.completed));
+  const totalSales = sales.reduce(
+    (sum, sale) => sum + toNumber(sale.total_amount),
+    0,
+  );
+  const totalIncentives = incentives.reduce(
+    (sum, item) => sum + toNumber(item.amount),
+    0,
+  );
 
   return (
     <div className="space-y-6">
@@ -286,6 +345,36 @@ export function MemberDetail({ memberId }: { memberId: string }) {
         />
       </div>
 
+      <Card>
+        <CardHeader>
+          <CardTitle>Performance trend</CardTitle>
+          <CardDescription>
+            Tasks completed over the last six months.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex h-36 items-end gap-3">
+            {chartData.map((item) => (
+              <div
+                key={item.key}
+                className="flex h-full flex-1 flex-col items-center justify-end gap-2"
+              >
+                <span className="text-xs font-medium">{item.completed}</span>
+                <div
+                  className="w-full max-w-14 rounded-t-lg bg-brand-gradient"
+                  style={{
+                    height: `${Math.max(6, (item.completed / chartMax) * 100)}%`,
+                  }}
+                />
+                <span className="text-xs text-muted-foreground">
+                  {item.label}
+                </span>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader>
@@ -298,7 +387,7 @@ export function MemberDetail({ memberId }: { memberId: string }) {
                 No tasks assigned yet.
               </p>
             ) : (
-              tasks.map((task) => (
+              tasks.slice(0, 8).map((task) => (
                 <div
                   key={task.id}
                   className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2"
@@ -352,6 +441,83 @@ export function MemberDetail({ memberId }: { memberId: string }) {
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader>
+            <CardTitle>Sales</CardTitle>
+            <CardDescription>
+              {sales.length} recent sale{sales.length === 1 ? "" : "s"} ·{" "}
+              {formatINR(totalSales)}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {sales.length === 0 ? (
+              <p className="py-4 text-sm text-muted-foreground">
+                No sales recorded for this member.
+              </p>
+            ) : (
+              sales.slice(0, 6).map((sale) => (
+                <Link
+                  key={sale.id}
+                  href={`/sales/${sale.id}`}
+                  className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2 hover:bg-muted/50"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">
+                      {sale.client_name}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {formatDate(sale.sale_date)}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm font-medium">
+                      {formatINR(sale.total_amount)}
+                    </p>
+                    <StatusBadge status={sale.payment_status} />
+                  </div>
+                </Link>
+              ))
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Incentives</CardTitle>
+            <CardDescription>
+              {formatINR(totalIncentives)} across recent entries.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {incentives.length === 0 ? (
+              <p className="py-4 text-sm text-muted-foreground">
+                No incentives earned yet.
+              </p>
+            ) : (
+              incentives.slice(0, 8).map((item) => (
+                <div
+                  key={item.id}
+                  className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2"
+                >
+                  <div>
+                    <p className="text-sm font-medium capitalize">
+                      {item.source} incentive
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {formatDate(item.month)}
+                    </p>
+                  </div>
+                  <span className="text-sm font-medium">
+                    {formatINR(item.amount)}
+                  </span>
+                </div>
+              ))
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card>
+          <CardHeader>
             <CardTitle>Work details</CardTitle>
           </CardHeader>
           <CardContent className="grid gap-4 text-sm sm:grid-cols-2">
@@ -369,6 +535,18 @@ export function MemberDetail({ memberId }: { memberId: string }) {
               <p className="text-xs text-muted-foreground">Dedicated work</p>
               <p className="mt-0.5 font-medium">
                 {member.dedicated_work ?? "—"}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Reporting manager</p>
+              <p className="mt-0.5 font-medium">
+                {manager?.full_name ?? "Not assigned"}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Monthly target</p>
+              <p className="mt-0.5 font-medium">
+                {formatINR(target?.target_amount ?? salary?.target_amount)}
               </p>
             </div>
           </CardContent>
@@ -430,6 +608,8 @@ export function MemberDetail({ memberId }: { memberId: string }) {
           onOpenChange={setDialogOpen}
           member={member}
           salaryConfig={config}
+          monthlyTarget={target?.target_amount ?? null}
+          managers={profiles}
           actorRole={role ?? "employee"}
         />
       ) : null}

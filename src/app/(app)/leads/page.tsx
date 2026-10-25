@@ -1,8 +1,12 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import Link from "next/link";
 import {
+  CalendarClock,
   Download,
+  LayoutGrid,
+  List,
   Mail,
   Phone,
   Plus,
@@ -10,12 +14,14 @@ import {
   Target,
   Trash2,
   Upload,
+  UserCheck,
   UserRound,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
 
+import { LeadConfirmDialog } from "@/components/leads/lead-confirm-dialog";
 import { LeadDialog } from "@/components/leads/lead-dialog";
 import { LeadImportDialog } from "@/components/leads/lead-import-dialog";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -36,6 +42,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -61,11 +68,14 @@ import {
 } from "@/components/ui/table";
 import { useRole } from "@/hooks/use-role";
 import {
+  LEAD_FREQUENCIES,
+  LEAD_FREQUENCY_LABELS,
   LEAD_KINDS,
   LEAD_KIND_LABELS,
   LEAD_STATUSES,
   LEAD_STATUS_LABELS,
   ROLE_LABELS,
+  type LeadFrequency,
   type LeadKind,
   type LeadStatus,
 } from "@/lib/constants";
@@ -85,12 +95,21 @@ export default function LeadsPage() {
   const queryClient = useQueryClient();
   const [statusFilter, setStatusFilter] = useState<"all" | LeadStatus>("all");
   const [kindFilter, setKindFilter] = useState<"all" | LeadKind>("all");
+  const [frequencyFilter, setFrequencyFilter] = useState<
+    "all" | LeadFrequency
+  >("all");
   const [assigneeFilter, setAssigneeFilter] = useState("all");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const [view, setView] = useState<"table" | "kanban" | "upcoming">("table");
   const [search, setSearch] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [editingLead, setEditingLead] = useState<Lead | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Lead | null>(null);
+  const [confirmTarget, setConfirmTarget] = useState<Lead | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [bulkAssignee, setBulkAssignee] = useState("");
 
   const leadsQuery = useQuery({
     queryKey: ["leads", profile?.id, role],
@@ -132,19 +151,27 @@ export default function LeadsPage() {
     mutationFn: async ({
       lead,
       status,
+      amount,
     }: {
       lead: Lead;
       status: LeadStatus;
+      amount?: number;
     }) => {
       const supabase = createClient();
       const { error } = await supabase
         .from("leads")
-        .update({ status })
+        .update({
+          status,
+          ...(status === "confirmed" && amount !== undefined
+            ? { expected_value: amount }
+            : {}),
+        })
         .eq("id", lead.id);
       if (error) throw error;
     },
     onSuccess: () => {
       toast.success("Lead status updated");
+      setConfirmTarget(null);
       void queryClient.invalidateQueries({ queryKey: ["leads"] });
       void queryClient.invalidateQueries({ queryKey: ["tasks"] });
       void queryClient.invalidateQueries({ queryKey: ["sales"] });
@@ -155,6 +182,44 @@ export default function LeadsPage() {
       toast.error(error instanceof Error ? error.message : "Update failed");
     },
   });
+
+  const bulkAssignMutation = useMutation({
+    mutationFn: async ({
+      ids,
+      assignedTo,
+    }: {
+      ids: string[];
+      assignedTo: string;
+    }) => {
+      const supabase = createClient();
+      const { error } = await supabase
+        .from("leads")
+        .update({ assigned_to: assignedTo })
+        .in("id", ids);
+      if (error) throw error;
+    },
+    onSuccess: (_data, variables) => {
+      toast.success(
+        `${variables.ids.length} lead${variables.ids.length === 1 ? "" : "s"} assigned`,
+      );
+      setSelectedIds([]);
+      setBulkAssignee("");
+      void queryClient.invalidateQueries({ queryKey: ["leads"] });
+      void queryClient.invalidateQueries({ queryKey: ["tasks"] });
+      void queryClient.invalidateQueries({ queryKey: ["notifications"] });
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Assignment failed");
+    },
+  });
+
+  const handleStatusChange = (lead: Lead, status: LeadStatus) => {
+    if (status === "confirmed" && lead.status !== "confirmed") {
+      setConfirmTarget(lead);
+      return;
+    }
+    statusMutation.mutate({ lead, status });
+  };
 
   const deleteMutation = useMutation({
     mutationFn: async (lead: Lead) => {
@@ -185,13 +250,32 @@ export default function LeadsPage() {
 
   const filteredLeads = useMemo(() => {
     const needle = search.trim().toLowerCase();
+    const now = new Date();
+    const upcomingEnd = new Date(now);
+    upcomingEnd.setDate(upcomingEnd.getDate() + 7);
+    const upcomingEndISO = upcomingEnd.toISOString().slice(0, 10);
     return leads.filter((lead) => {
       if (statusFilter !== "all" && lead.status !== statusFilter) return false;
       if (kindFilter !== "all" && lead.kind !== kindFilter) return false;
       if (
+        frequencyFilter !== "all" &&
+        lead.frequency !== frequencyFilter
+      ) {
+        return false;
+      }
+      if (
         isAdmin &&
         assigneeFilter !== "all" &&
         lead.assigned_to !== assigneeFilter
+      ) {
+        return false;
+      }
+      const followUp = lead.next_follow_up?.slice(0, 10) ?? "";
+      if (fromDate && (!followUp || followUp < fromDate)) return false;
+      if (toDate && (!followUp || followUp > toDate)) return false;
+      if (
+        view === "upcoming" &&
+        (!followUp || followUp < todayISO() || followUp > upcomingEndISO)
       ) {
         return false;
       }
@@ -207,7 +291,18 @@ export default function LeadsPage() {
         .filter(Boolean)
         .some((value) => value!.toLowerCase().includes(needle));
     });
-  }, [leads, statusFilter, kindFilter, assigneeFilter, search, isAdmin]);
+  }, [
+    leads,
+    statusFilter,
+    kindFilter,
+    frequencyFilter,
+    assigneeFilter,
+    fromDate,
+    toDate,
+    view,
+    search,
+    isAdmin,
+  ]);
 
   const counts = useMemo(
     () => ({
@@ -224,6 +319,31 @@ export default function LeadsPage() {
   const pipelineValue = filteredLeads
     .filter((lead) => lead.status !== "cancelled" && lead.status !== "confirmed")
     .reduce((sum, lead) => sum + Number(lead.expected_value ?? 0), 0);
+
+  const selectedLeads = filteredLeads.filter((lead) =>
+    selectedIds.includes(lead.id),
+  );
+  const selectedVisibleIds = selectedLeads.map((lead) => lead.id);
+  const allVisibleSelected =
+    filteredLeads.length > 0 &&
+    filteredLeads.every((lead) => selectedIds.includes(lead.id));
+
+  const toggleLead = (leadId: string) => {
+    setSelectedIds((current) =>
+      current.includes(leadId)
+        ? current.filter((id) => id !== leadId)
+        : [...current, leadId],
+    );
+  };
+
+  const toggleAllVisible = () => {
+    const visibleIds = filteredLeads.map((lead) => lead.id);
+    setSelectedIds((current) =>
+      allVisibleSelected
+        ? current.filter((id) => !visibleIds.includes(id))
+        : Array.from(new Set([...current, ...visibleIds])),
+    );
+  };
 
   const openCreate = () => {
     setEditingLead(null);
@@ -310,28 +430,56 @@ export default function LeadsPage() {
         }
       />
 
-      <div className="flex flex-wrap gap-2">
-        {(["all", ...LEAD_STATUSES] as const).map((status) => (
-          <Button
-            key={status}
-            size="sm"
-            variant={statusFilter === status ? "default" : "outline"}
-            onClick={() => setStatusFilter(status)}
-          >
-            {status === "all" ? "All leads" : LEAD_STATUS_LABELS[status]}
-            <Badge
-              variant={statusFilter === status ? "secondary" : "outline"}
-              className="ml-1 px-1.5"
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap gap-2">
+          {(["all", ...LEAD_STATUSES] as const).map((status) => (
+            <Button
+              key={status}
+              size="sm"
+              variant={statusFilter === status ? "default" : "outline"}
+              onClick={() => setStatusFilter(status)}
             >
-              {counts[status]}
-            </Badge>
+              {status === "all" ? "All leads" : LEAD_STATUS_LABELS[status]}
+              <Badge
+                variant={statusFilter === status ? "secondary" : "outline"}
+                className="ml-1 px-1.5"
+              >
+                {counts[status]}
+              </Badge>
+            </Button>
+          ))}
+        </div>
+        <div className="flex rounded-lg border p-0.5">
+          <Button
+            variant={view === "table" ? "secondary" : "ghost"}
+            size="sm"
+            onClick={() => setView("table")}
+          >
+            <List className="size-3.5" />
+            Table
           </Button>
-        ))}
+          <Button
+            variant={view === "kanban" ? "secondary" : "ghost"}
+            size="sm"
+            onClick={() => setView("kanban")}
+          >
+            <LayoutGrid className="size-3.5" />
+            Kanban
+          </Button>
+          <Button
+            variant={view === "upcoming" ? "secondary" : "ghost"}
+            size="sm"
+            onClick={() => setView("upcoming")}
+          >
+            <CalendarClock className="size-3.5" />
+            Upcoming
+          </Button>
+        </div>
       </div>
 
       <Card>
         <CardContent className="space-y-4">
-          <div className="flex flex-col gap-2 sm:flex-row">
+          <div className="flex flex-col gap-2 lg:flex-row lg:flex-wrap">
             <div className="relative flex-1">
               <Search className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input
@@ -359,6 +507,24 @@ export default function LeadsPage() {
                 ))}
               </SelectContent>
             </Select>
+            <Select
+              value={frequencyFilter}
+              onValueChange={(value) =>
+                setFrequencyFilter(value as "all" | LeadFrequency)
+              }
+            >
+              <SelectTrigger className="w-full sm:w-[150px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All frequencies</SelectItem>
+                {LEAD_FREQUENCIES.map((frequency) => (
+                  <SelectItem key={frequency} value={frequency}>
+                    {LEAD_FREQUENCY_LABELS[frequency]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             {isAdmin ? (
               <Select
                 value={assigneeFilter}
@@ -377,11 +543,73 @@ export default function LeadsPage() {
                 </SelectContent>
               </Select>
             ) : null}
+            <div className="flex items-center gap-2 rounded-lg border px-2 py-1">
+              <span className="shrink-0 text-xs text-muted-foreground">
+                Follow-up
+              </span>
+              <Input
+                type="date"
+                aria-label="Follow-up from"
+                value={fromDate}
+                onChange={(event) => setFromDate(event.target.value)}
+                className="w-[135px] border-0 px-1 shadow-none"
+              />
+              <span className="text-xs text-muted-foreground">to</span>
+              <Input
+                type="date"
+                aria-label="Follow-up to"
+                value={toDate}
+                onChange={(event) => setToDate(event.target.value)}
+                className="w-[135px] border-0 px-1 shadow-none"
+              />
+            </div>
           </div>
+
+          {isAdmin && selectedLeads.length > 0 ? (
+            <div className="flex flex-col gap-2 rounded-xl border bg-muted/30 p-3 sm:flex-row sm:items-center">
+              <p className="flex-1 text-sm font-medium">
+                {selectedLeads.length} lead
+                {selectedLeads.length === 1 ? "" : "s"} selected
+              </p>
+              <Select value={bulkAssignee} onValueChange={setBulkAssignee}>
+                <SelectTrigger className="w-full sm:w-[200px]">
+                  <SelectValue placeholder="Assign to member" />
+                </SelectTrigger>
+                <SelectContent>
+                  {profiles.map((member) => (
+                    <SelectItem key={member.id} value={member.id}>
+                      {member.full_name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button
+                size="sm"
+                disabled={!bulkAssignee || bulkAssignMutation.isPending}
+                onClick={() =>
+                  bulkAssignMutation.mutate({
+                    ids: selectedVisibleIds,
+                    assignedTo: bulkAssignee,
+                  })
+                }
+              >
+                <UserCheck className="size-4" />
+                Assign
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setSelectedIds([])}
+              >
+                Clear
+              </Button>
+            </div>
+          ) : null}
 
           <div className="flex items-center justify-between text-sm">
             <p className="text-muted-foreground">
               {filteredLeads.length} leads shown
+              {view === "upcoming" ? " · next 7 days" : ""}
             </p>
             <p className="font-medium">
               Open pipeline:{" "}
@@ -418,11 +646,131 @@ export default function LeadsPage() {
                 ) : null
               }
             />
+          ) : view === "kanban" ? (
+            <div className="grid gap-3 overflow-x-auto pb-2 md:grid-cols-5">
+              {LEAD_STATUSES.map((status) => {
+                const columnLeads = filteredLeads.filter(
+                  (lead) => lead.status === status,
+                );
+                return (
+                  <div
+                    key={status}
+                    className="min-w-[230px] rounded-xl border bg-muted/20 p-2"
+                  >
+                    <div className="mb-2 flex items-center justify-between px-1">
+                      <p className="text-sm font-medium">
+                        {LEAD_STATUS_LABELS[status]}
+                      </p>
+                      <Badge variant="outline">{columnLeads.length}</Badge>
+                    </div>
+                    <div className="space-y-2">
+                      {columnLeads.length === 0 ? (
+                        <p className="rounded-lg border border-dashed px-3 py-6 text-center text-xs text-muted-foreground">
+                          No leads
+                        </p>
+                      ) : (
+                        columnLeads.map((lead) => {
+                          const owner =
+                            profileMap.get(lead.assigned_to ?? "") ??
+                            (lead.assigned_to === profile.id
+                              ? profile
+                              : undefined);
+                          const canEdit = canEditLead(role, profile.id, lead);
+                          return (
+                            <div
+                              key={lead.id}
+                              className="rounded-lg border bg-card p-3 shadow-sm"
+                            >
+                              <div className="flex items-start gap-2">
+                                {isAdmin ? (
+                                  <Checkbox
+                                    checked={selectedIds.includes(lead.id)}
+                                    onCheckedChange={() => toggleLead(lead.id)}
+                                    aria-label={`Select ${lead.client_name}`}
+                                  />
+                                ) : null}
+                                <div className="min-w-0 flex-1">
+                                  <Link
+                                    href={`/leads/${lead.id}`}
+                                    className="block truncate text-sm font-medium hover:underline"
+                                  >
+                                    {lead.client_name}
+                                  </Link>
+                                  <p className="truncate text-xs text-muted-foreground">
+                                    {lead.company ||
+                                      lead.item_name ||
+                                      "Direct lead"}
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="mt-2 flex items-center justify-between text-xs">
+                                <Badge variant="secondary">
+                                  {LEAD_KIND_LABELS[
+                                    lead.kind as LeadKind
+                                  ] ?? lead.kind}
+                                </Badge>
+                                <span className="font-medium">
+                                  {formatINR(lead.expected_value)}
+                                </span>
+                              </div>
+                              <p className="mt-2 truncate text-xs text-muted-foreground">
+                                {owner?.full_name ?? "Unassigned"}
+                              </p>
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                Follow-up:{" "}
+                                {lead.next_follow_up
+                                  ? formatDate(lead.next_follow_up)
+                                  : "—"}
+                              </p>
+                              {canEdit ? (
+                                <Select
+                                  value={lead.status}
+                                  onValueChange={(value) =>
+                                    handleStatusChange(
+                                      lead,
+                                      value as LeadStatus,
+                                    )
+                                  }
+                                  disabled={statusMutation.isPending}
+                                >
+                                  <SelectTrigger
+                                    size="sm"
+                                    className="mt-2 w-full"
+                                  >
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {LEAD_STATUSES.map((value) => (
+                                      <SelectItem key={value} value={value}>
+                                        {LEAD_STATUS_LABELS[value]}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              ) : null}
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           ) : (
             <div className="overflow-x-auto">
               <Table className="min-w-[900px]">
                 <TableHeader>
                   <TableRow>
+                    {isAdmin ? (
+                      <TableHead className="w-10">
+                        <Checkbox
+                          checked={allVisibleSelected}
+                          onCheckedChange={toggleAllVisible}
+                          aria-label="Select all visible leads"
+                        />
+                      </TableHead>
+                    ) : null}
                     <TableHead>Client</TableHead>
                     <TableHead>Contact</TableHead>
                     <TableHead>Kind</TableHead>
@@ -446,6 +794,15 @@ export default function LeadsPage() {
                       lead.status !== "cancelled";
                     return (
                       <TableRow key={lead.id}>
+                        {isAdmin ? (
+                          <TableCell>
+                            <Checkbox
+                              checked={selectedIds.includes(lead.id)}
+                              onCheckedChange={() => toggleLead(lead.id)}
+                              aria-label={`Select ${lead.client_name}`}
+                            />
+                          </TableCell>
+                        ) : null}
                         <TableCell className="max-w-[220px]">
                           <p className="truncate font-medium">
                             {lead.client_name}
@@ -524,10 +881,7 @@ export default function LeadsPage() {
                             <Select
                               value={lead.status}
                               onValueChange={(value) =>
-                                statusMutation.mutate({
-                                  lead,
-                                  status: value as LeadStatus,
-                                })
+                                handleStatusChange(lead, value as LeadStatus)
                               }
                               disabled={statusMutation.isPending}
                             >
@@ -600,6 +954,24 @@ export default function LeadsPage() {
         profiles={profiles.length > 0 ? profiles : [profile]}
         currentUserId={profile.id}
         canAssign={isAdmin}
+      />
+
+      <LeadConfirmDialog
+        key={`confirm-${confirmTarget?.id ?? "closed"}`}
+        open={Boolean(confirmTarget)}
+        onOpenChange={(open) => {
+          if (!open) setConfirmTarget(null);
+        }}
+        lead={confirmTarget}
+        pending={statusMutation.isPending}
+        onConfirm={(amount) => {
+          if (!confirmTarget) return;
+          statusMutation.mutate({
+            lead: confirmTarget,
+            status: "confirmed",
+            amount,
+          });
+        }}
       />
 
       <LeadImportDialog

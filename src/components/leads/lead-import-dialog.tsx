@@ -2,7 +2,12 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
-import { FileSpreadsheet, Loader2, Upload } from "lucide-react";
+import {
+  Download,
+  FileSpreadsheet,
+  Loader2,
+  Upload,
+} from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
@@ -36,10 +41,10 @@ import { createClient } from "@/lib/supabase/client";
 import { toNumber } from "@/lib/utils";
 import type { Profile } from "@/types/database";
 
-type ImportRow = {
+type ImportData = {
   client_name: string;
   company: string | null;
-  phone: string | null;
+  phone: string;
   email: string | null;
   kind: LeadKind;
   item_name: string | null;
@@ -50,6 +55,30 @@ type ImportRow = {
   next_follow_up: string | null;
   notes: string | null;
 };
+
+type ParsedRow = {
+  rowNumber: number;
+  data: ImportData;
+  assignedToEmail: string | null;
+  assignedToId: string | null;
+  errors: string[];
+};
+
+const TEMPLATE_COLUMNS = [
+  "client_name",
+  "company",
+  "phone",
+  "email",
+  "kind",
+  "item_name",
+  "frequency",
+  "source",
+  "expected_value",
+  "notes",
+  "assigned_to_email",
+];
+
+const CHUNK_SIZE = 200;
 
 type LeadImportDialogProps = {
   open: boolean;
@@ -82,7 +111,12 @@ function asDate(value: string) {
   return format(parsed, "yyyy-MM-dd");
 }
 
-function mapRow(row: Record<string, unknown>): ImportRow | null {
+function mapRow(
+  row: Record<string, unknown>,
+  rowNumber: number,
+  profileMap: Map<string, Profile>,
+  allowAssignment: boolean,
+): ParsedRow {
   const normalized: Record<string, string> = {};
   for (const [key, value] of Object.entries(row)) {
     normalized[normalizeKey(key)] = String(value ?? "").trim();
@@ -94,8 +128,18 @@ function mapRow(row: Record<string, unknown>): ImportRow | null {
     "name",
     "customer",
   ]);
-  if (!clientName) return null;
-
+  const phone = pick(normalized, [
+    "phone",
+    "mobile",
+    "contact",
+    "phone_number",
+  ]);
+  const email = pick(normalized, ["email", "email_address"]);
+  const assignedToEmail = pick(normalized, [
+    "assigned_to_email",
+    "assigned_email",
+    "owner_email",
+  ]).toLowerCase();
   const kindValue = pick(normalized, ["kind", "type"]).toLowerCase();
   const frequencyValue = pick(normalized, [
     "frequency",
@@ -113,42 +157,55 @@ function mapRow(row: Record<string, unknown>): ImportRow | null {
     "follow_up",
     "follow_up_date",
   ]);
+  const owner =
+    allowAssignment && assignedToEmail
+      ? profileMap.get(assignedToEmail)
+      : undefined;
+  const errors: string[] = [];
+
+  if (!clientName) errors.push("Client name is required");
+  if (!phone) errors.push("Phone is required");
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    errors.push("Invalid email address");
+  }
+  if (allowAssignment && assignedToEmail && !owner) {
+    errors.push("Assigned member email not found");
+  }
 
   return {
-    client_name: clientName,
-    company: pick(normalized, ["company", "organisation", "organization"]) ||
-      null,
-    phone: pick(normalized, ["phone", "mobile", "contact", "phone_number"]) ||
-      null,
-    email: pick(normalized, ["email", "email_address"]) || null,
-    kind: LEAD_KINDS.includes(kindValue as LeadKind)
-      ? (kindValue as LeadKind)
-      : "product",
-    item_name: pick(normalized, [
-      "item_name",
-      "product",
-      "service",
-      "item",
-      "product_service",
-    ])
-      ? pick(normalized, [
+    rowNumber,
+    assignedToEmail: assignedToEmail || null,
+    assignedToId: owner?.id ?? null,
+    errors,
+    data: {
+      client_name: clientName,
+      company:
+        pick(normalized, ["company", "organisation", "organization"]) || null,
+      phone,
+      email: email || null,
+      kind: LEAD_KINDS.includes(kindValue as LeadKind)
+        ? (kindValue as LeadKind)
+        : "product",
+      item_name:
+        pick(normalized, [
           "item_name",
           "product",
           "service",
           "item",
           "product_service",
-        ])
-      : null,
-    frequency: LEAD_FREQUENCIES.includes(frequencyValue as LeadFrequency)
-      ? (frequencyValue as LeadFrequency)
-      : "daily",
-    status: LEAD_STATUSES.includes(statusValue as LeadStatus)
-      ? (statusValue as LeadStatus)
-      : "upcoming",
-    source: pick(normalized, ["source", "channel"]) || null,
-    expected_value: expectedValue ? toNumber(expectedValue) : null,
-    next_follow_up: asDate(nextFollowUp),
-    notes: pick(normalized, ["notes", "note", "remarks", "description"]) || null,
+        ]) || null,
+      frequency: LEAD_FREQUENCIES.includes(frequencyValue as LeadFrequency)
+        ? (frequencyValue as LeadFrequency)
+        : "daily",
+      status: LEAD_STATUSES.includes(statusValue as LeadStatus)
+        ? (statusValue as LeadStatus)
+        : "upcoming",
+      source: pick(normalized, ["source", "channel"]) || null,
+      expected_value: expectedValue ? toNumber(expectedValue) : null,
+      next_follow_up: asDate(nextFollowUp),
+      notes:
+        pick(normalized, ["notes", "note", "remarks", "description"]) || null,
+    },
   };
 }
 
@@ -162,36 +219,52 @@ export function LeadImportDialog({
   const queryClient = useQueryClient();
   const inputRef = useRef<HTMLInputElement>(null);
   const [fileName, setFileName] = useState("");
-  const [rows, setRows] = useState<ImportRow[]>([]);
+  const [rows, setRows] = useState<ParsedRow[]>([]);
   const [assignedTo, setAssignedTo] = useState(currentUserId);
   const [reading, setReading] = useState(false);
 
+  const validRows = rows.filter((row) => row.errors.length === 0);
+  const invalidRows = rows.filter((row) => row.errors.length > 0);
+
   const mutation = useMutation({
     mutationFn: async () => {
+      if (validRows.length === 0) throw new Error("No valid rows to import");
       const supabase = createClient();
       const { data: batch, error: batchError } = await supabase
         .from("lead_import_batches")
         .insert({
           file_name: fileName,
-          row_count: rows.length,
+          row_count: validRows.length,
           imported_by: currentUserId,
         })
         .select("id")
         .single();
       if (batchError) throw batchError;
 
-      const { error } = await supabase.from("leads").insert(
-        rows.map((row) => ({
-          ...row,
-          assigned_to: assignedTo,
-          created_by: currentUserId,
-          import_batch_id: batch.id,
-        })),
-      );
-      if (error) throw error;
+      const payload = validRows.map(({ data, assignedToId }) => ({
+        ...data,
+        assigned_to:
+          canAssign && assignedToId ? assignedToId : assignedTo || currentUserId,
+        created_by: currentUserId,
+        import_batch_id: batch.id,
+      }));
+
+      for (let start = 0; start < payload.length; start += CHUNK_SIZE) {
+        const chunk = payload.slice(start, start + CHUNK_SIZE);
+        const { error } = await supabase.from("leads").insert(chunk);
+        if (error) {
+          throw new Error(
+            `Imported ${start} of ${payload.length} rows. ${error.message}`,
+          );
+        }
+      }
+
+      return invalidRows.length;
     },
-    onSuccess: () => {
-      toast.success(`${rows.length} leads imported`);
+    onSuccess: (skipped) => {
+      toast.success(
+        `${validRows.length} leads imported${skipped ? `; ${skipped} invalid rows skipped` : ""}`,
+      );
       void queryClient.invalidateQueries({ queryKey: ["leads"] });
       void queryClient.invalidateQueries({ queryKey: ["tasks"] });
       void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
@@ -217,12 +290,17 @@ export function LeadImportDialog({
         defval: "",
         raw: false,
       });
-      const mapped = raw
-        .map((row) => mapRow(row))
-        .filter((row): row is ImportRow => row !== null);
-      setRows(mapped);
-      if (mapped.length === 0) {
-        toast.error("No valid rows found. Include a client_name column.");
+      const profileMap = new Map(
+        profiles
+          .filter((profile) => profile.email)
+          .map((profile) => [profile.email!.toLowerCase(), profile]),
+      );
+      const parsed = raw.map((row, index) =>
+        mapRow(row, index + 2, profileMap, canAssign),
+      );
+      setRows(parsed);
+      if (parsed.length === 0) {
+        toast.error("No rows found in this file.");
       }
     } catch (error) {
       toast.error(
@@ -234,18 +312,42 @@ export function LeadImportDialog({
     }
   };
 
+  const downloadTemplate = () => {
+    const templateRow = Object.fromEntries(
+      TEMPLATE_COLUMNS.map((column) => [column, ""]),
+    );
+    const worksheet = XLSX.utils.json_to_sheet([templateRow], {
+      header: TEMPLATE_COLUMNS,
+    });
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Leads");
+    XLSX.writeFile(workbook, "lead-import-template.xlsx");
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Import leads</DialogTitle>
           <DialogDescription>
-            Upload an Excel or CSV file. A header row is required, with at least
-            a <span className="font-medium">client_name</span> column.
+            Upload Excel or CSV with name and phone. Invalid rows are shown in
+            the preview and skipped.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={downloadTemplate}
+            >
+              <Download className="size-4" />
+              Download template
+            </Button>
+          </div>
+
           <button
             type="button"
             onClick={() => inputRef.current?.click()}
@@ -268,22 +370,67 @@ export function LeadImportDialog({
             type="file"
             accept=".xlsx,.xls,.csv"
             className="hidden"
-            onChange={(event) => void handleFile(event.target.files?.[0])}
+            onChange={(event) => {
+              void handleFile(event.target.files?.[0]);
+              event.target.value = "";
+            }}
           />
 
           {rows.length > 0 ? (
-            <div className="rounded-xl border bg-card p-3">
-              <p className="text-sm font-medium">{rows.length} valid rows</p>
-              <p className="mt-1 truncate text-xs text-muted-foreground">
-                First: {rows[0].client_name}
-                {rows[0].company ? ` · ${rows[0].company}` : ""}
-              </p>
+            <div className="space-y-3 rounded-xl border bg-card p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm font-medium">
+                  {validRows.length} ready · {invalidRows.length} invalid
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {rows.length} rows found
+                </p>
+              </div>
+              <div className="max-h-40 overflow-y-auto rounded-lg border">
+                <table className="w-full text-left text-xs">
+                  <thead className="sticky top-0 bg-muted/80">
+                    <tr>
+                      <th className="px-2 py-1.5 font-medium">Row</th>
+                      <th className="px-2 py-1.5 font-medium">Client</th>
+                      <th className="px-2 py-1.5 font-medium">Phone</th>
+                      <th className="px-2 py-1.5 font-medium">Validation</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.slice(0, 10).map((row) => (
+                      <tr key={row.rowNumber} className="border-t">
+                        <td className="px-2 py-1.5">{row.rowNumber}</td>
+                        <td className="max-w-32 truncate px-2 py-1.5">
+                          {row.data.client_name || "—"}
+                        </td>
+                        <td className="px-2 py-1.5">{row.data.phone || "—"}</td>
+                        <td
+                          className={`px-2 py-1.5 ${
+                            row.errors.length
+                              ? "text-brand-red"
+                              : "text-brand-green"
+                          }`}
+                        >
+                          {row.errors.length
+                            ? row.errors.join(", ")
+                            : "Ready"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {rows.length > 10 ? (
+                <p className="text-xs text-muted-foreground">
+                  Showing the first 10 rows.
+                </p>
+              ) : null}
             </div>
           ) : null}
 
           {canAssign ? (
             <div className="space-y-2">
-              <Label>Assign imported leads to</Label>
+              <Label>Default assigned member</Label>
               <Select value={assignedTo} onValueChange={setAssignedTo}>
                 <SelectTrigger className="w-full">
                   <SelectValue />
@@ -296,6 +443,9 @@ export function LeadImportDialog({
                   ))}
                 </SelectContent>
               </Select>
+              <p className="text-xs text-muted-foreground">
+                A row with assigned_to_email overrides this default.
+              </p>
             </div>
           ) : null}
         </div>
@@ -305,7 +455,7 @@ export function LeadImportDialog({
             Cancel
           </Button>
           <Button
-            disabled={rows.length === 0 || mutation.isPending || reading}
+            disabled={validRows.length === 0 || mutation.isPending || reading}
             onClick={() => mutation.mutate()}
           >
             {mutation.isPending ? (
@@ -313,7 +463,7 @@ export function LeadImportDialog({
             ) : (
               <Upload className="size-4" />
             )}
-            Import {rows.length > 0 ? rows.length : ""} leads
+            Import {validRows.length > 0 ? validRows.length : ""} leads
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { createAdminClient, createClient } from "@/lib/supabase/server";
+import { monthStartISO } from "@/lib/utils";
 
 const createMemberSchema = z.object({
   full_name: z.string().trim().min(2, "Name is too short").max(120),
@@ -12,9 +13,21 @@ const createMemberSchema = z.object({
   designation: z.string().trim().max(120).optional().nullable(),
   position: z.string().trim().max(120).optional().nullable(),
   dedicated_work: z.string().trim().max(240).optional().nullable(),
+  manager_id: z.string().uuid().optional().nullable(),
   joined_on: z.string().optional().nullable(),
   base_salary: z.coerce.number().min(0).default(0),
   sales_incentive_percent: z.coerce.number().min(0).max(100).default(0),
+  monthly_target: z.coerce.number().min(0).default(0),
+}).superRefine((value, ctx) => {
+  if (
+    (value.role === "employee" || value.role === "intern") &&
+    (!value.dedicated_work || !value.position)
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Employee and intern roles require position and dedicated work",
+    });
+  }
 });
 
 export async function POST(request: Request) {
@@ -93,6 +106,8 @@ export async function POST(request: Request) {
     designation: input.designation ?? null,
     position: input.position ?? null,
     dedicated_work: input.dedicated_work ?? null,
+    manager_id:
+      actor.role === "owner" ? input.manager_id ?? null : actor.id,
     joined_on: input.joined_on || null,
     is_active: true,
   });
@@ -118,6 +133,22 @@ export async function POST(request: Request) {
       { error: salaryError.message },
       { status: 400 },
     );
+  }
+
+  if (actor.role === "owner") {
+    const { error: targetError } = await admin.from("targets").insert({
+      user_id: userId,
+      month: monthStartISO(),
+      target_amount: input.monthly_target,
+    });
+
+    if (targetError) {
+      await admin.auth.admin.deleteUser(userId);
+      return NextResponse.json(
+        { error: targetError.message },
+        { status: 400 },
+      );
+    }
   }
 
   return NextResponse.json({ id: userId }, { status: 201 });

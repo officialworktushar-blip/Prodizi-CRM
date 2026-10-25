@@ -96,6 +96,7 @@ type StatusChange = {
   task: Task;
   status: TaskStatus;
   leadStatus?: LeadStatus;
+  dealAmount?: number;
 };
 
 type TaskRowProps = {
@@ -358,7 +359,12 @@ export default function TasksPage() {
 
       return { previous };
     },
-    mutationFn: async ({ task, status, leadStatus }: StatusChange) => {
+    mutationFn: async ({
+      task,
+      status,
+      leadStatus,
+      dealAmount,
+    }: StatusChange) => {
       const supabase = createClient();
       const { error } = await supabase
         .from("tasks")
@@ -374,7 +380,12 @@ export default function TasksPage() {
       if (leadStatus && task.lead_id) {
         const { error: leadError } = await supabase
           .from("leads")
-          .update({ status: leadStatus })
+          .update({
+            status: leadStatus,
+            ...(leadStatus === "confirmed" && dealAmount !== undefined
+              ? { expected_value: dealAmount }
+              : {}),
+          })
           .eq("id", task.lead_id);
         if (leadError) {
           warning = "Task completed, but the lead status could not be updated.";
@@ -583,12 +594,13 @@ export default function TasksPage() {
     statusMutation.mutate({ task, status });
   };
 
-  const confirmCompletion = (leadStatus: LeadStatus) => {
+  const confirmCompletion = (leadStatus: LeadStatus, dealAmount?: number) => {
     if (!completionTask) return;
     statusMutation.mutate({
       task: completionTask,
       status: "completed",
       leadStatus,
+      dealAmount,
     });
   };
 
