@@ -2,13 +2,23 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  endOfMonth,
+  endOfWeek,
+  format,
+  startOfMonth,
+  startOfWeek,
+} from "date-fns";
+import {
   BadgeIndianRupee,
   Download,
   IndianRupee,
+  MoreHorizontal,
   Plus,
+  Receipt,
   Search,
   Trash2,
   UserRound,
+  Users,
   Wallet,
 } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -16,6 +26,7 @@ import { toast } from "sonner";
 import * as XLSX from "xlsx";
 
 import { PaymentDialog } from "@/components/sales/payment-dialog";
+import { SaleDetailSheet } from "@/components/sales/sale-detail-sheet";
 import { SaleDialog } from "@/components/sales/sale-dialog";
 import { EmptyState } from "@/components/shared/empty-state";
 import { ErrorState } from "@/components/shared/error-state";
@@ -72,12 +83,13 @@ import {
   formatDate,
   formatINR,
   getInitials,
-  monthEndISO,
-  monthStartISO,
   todayISO,
   toNumber,
 } from "@/lib/utils";
 import type { Lead, Profile, Sale } from "@/types/database";
+
+type DatePreset = "all" | "today" | "week" | "month" | "custom";
+type UpgradeFilter = "all" | "upgrade" | "new";
 
 export default function SalesPage() {
   const { profile, role, loading: roleLoading, error: roleError } = useRole();
@@ -87,9 +99,15 @@ export default function SalesPage() {
     "all",
   );
   const [sellerFilter, setSellerFilter] = useState("all");
+  const [datePreset, setDatePreset] = useState<DatePreset>("all");
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
+  const [serviceFilter, setServiceFilter] = useState("all");
+  const [upgradeFilter, setUpgradeFilter] = useState<UpgradeFilter>("all");
   const [search, setSearch] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingSale, setEditingSale] = useState<Sale | null>(null);
+  const [detailSaleId, setDetailSaleId] = useState<string | null>(null);
   const [paymentSale, setPaymentSale] = useState<Sale | null>(null);
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Sale | null>(null);
@@ -172,6 +190,42 @@ export default function SalesPage() {
   );
   const sales = useMemo(() => salesQuery.data ?? [], [salesQuery.data]);
 
+  const dateRange = useMemo(() => {
+    const now = new Date();
+    if (datePreset === "today") {
+      const value = format(now, "yyyy-MM-dd");
+      return { from: value, to: value };
+    }
+    if (datePreset === "week") {
+      return {
+        from: format(startOfWeek(now, { weekStartsOn: 1 }), "yyyy-MM-dd"),
+        to: format(endOfWeek(now, { weekStartsOn: 1 }), "yyyy-MM-dd"),
+      };
+    }
+    if (datePreset === "month") {
+      return {
+        from: format(startOfMonth(now), "yyyy-MM-dd"),
+        to: format(endOfMonth(now), "yyyy-MM-dd"),
+      };
+    }
+    if (datePreset === "custom") {
+      return { from: customFrom || null, to: customTo || null };
+    }
+    return { from: null, to: null };
+  }, [datePreset, customFrom, customTo]);
+
+  const serviceOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          sales
+            .map((sale) => sale.service_sold?.trim())
+            .filter((value): value is string => Boolean(value)),
+        ),
+      ).sort((a, b) => a.localeCompare(b)),
+    [sales],
+  );
+
   const filteredSales = useMemo(() => {
     const needle = search.trim().toLowerCase();
     return sales.filter((sale) => {
@@ -188,34 +242,62 @@ export default function SalesPage() {
       ) {
         return false;
       }
+      if (
+        serviceFilter !== "all" &&
+        (sale.service_sold?.trim() ?? "") !== serviceFilter
+      ) {
+        return false;
+      }
+      if (upgradeFilter === "upgrade" && !sale.is_upgrade) return false;
+      if (upgradeFilter === "new" && sale.is_upgrade) return false;
+      if (dateRange.from && sale.sale_date < dateRange.from) return false;
+      if (dateRange.to && sale.sale_date > dateRange.to) return false;
       if (!needle) return true;
-      return [sale.client_name, sale.service_sold, sale.notes]
+      const seller = profileMap.get(sale.sold_by ?? "");
+      return [
+        sale.client_name,
+        sale.service_sold,
+        sale.notes,
+        seller?.full_name,
+      ]
         .filter(Boolean)
         .some((value) => value!.toLowerCase().includes(needle));
     });
-  }, [sales, paymentFilter, sellerFilter, search, isAdmin]);
+  }, [
+    sales,
+    paymentFilter,
+    sellerFilter,
+    serviceFilter,
+    upgradeFilter,
+    dateRange,
+    search,
+    isAdmin,
+    profileMap,
+  ]);
 
-  const totals = useMemo(() => {
-    const monthStart = monthStartISO();
-    const monthEnd = monthEndISO();
-    return {
-      total: sales.reduce((sum, sale) => sum + toNumber(sale.total_amount), 0),
-      received: sales.reduce(
+  const totals = useMemo(
+    () => ({
+      total: filteredSales.reduce(
+        (sum, sale) => sum + toNumber(sale.total_amount),
+        0,
+      ),
+      received: filteredSales.reduce(
         (sum, sale) => sum + toNumber(sale.received_amount),
         0,
       ),
-      pending: sales.reduce(
+      remaining: filteredSales.reduce(
         (sum, sale) => sum + toNumber(sale.remaining_amount),
         0,
       ),
-      thisMonth: sales
-        .filter(
-          (sale) =>
-            sale.sale_date >= monthStart && sale.sale_date <= monthEnd,
-        )
-        .reduce((sum, sale) => sum + toNumber(sale.total_amount), 0),
-    };
-  }, [sales]);
+      clients: new Set(
+        filteredSales.map((sale) => sale.client_name.trim().toLowerCase()),
+      ).size,
+    }),
+    [filteredSales],
+  );
+
+  const detailSale =
+    sales.find((sale) => sale.id === detailSaleId) ?? null;
 
   const exportSales = () => {
     const rows = filteredSales.map((sale) => ({
@@ -300,79 +382,146 @@ export default function SalesPage() {
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
-          title="Total sales value"
+          title="Total sales"
           value={formatINR(totals.total)}
-          hint={`${sales.length} sales`}
+          hint={`${filteredSales.length} sales`}
           icon={BadgeIndianRupee}
           accent="blue"
         />
         <StatCard
-          title="Collected"
+          title="Total received"
           value={formatINR(totals.received)}
-          hint="Across all sales"
+          hint="Collected against sales"
           icon={IndianRupee}
           accent="green"
         />
         <StatCard
-          title="Outstanding"
-          value={formatINR(totals.pending)}
-          hint="Yet to be collected"
+          title="Total remaining"
+          value={formatINR(totals.remaining)}
+          hint="Outstanding balance"
           icon={Wallet}
           accent="orange"
         />
         <StatCard
-          title="This month"
-          value={formatINR(totals.thisMonth)}
-          hint="New sales value"
-          icon={IndianRupee}
+          title="Number of clients"
+          value={String(totals.clients)}
+          hint="Unique clients"
+          icon={Users}
           accent="teal"
         />
       </div>
 
       <Card>
         <CardContent className="space-y-4">
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <div className="relative flex-1">
-              <Search className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search client or service..."
-                className="pl-9"
-              />
-            </div>
-            <Select
-              value={paymentFilter}
-              onValueChange={(value) =>
-                setPaymentFilter(value as "all" | PaymentStatus)
-              }
-            >
-              <SelectTrigger className="w-full sm:w-[160px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All payments</SelectItem>
-                {PAYMENT_STATUSES.map((status) => (
-                  <SelectItem key={status} value={status}>
-                    {PAYMENT_STATUS_LABELS[status]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {isAdmin ? (
-              <Select value={sellerFilter} onValueChange={setSellerFilter}>
-                <SelectTrigger className="w-full sm:w-[190px]">
+          <div className="space-y-2">
+            <div className="flex flex-col gap-2 lg:flex-row lg:flex-wrap">
+              <div className="relative min-w-[220px] flex-1">
+                <Search className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Search client, service or seller..."
+                  className="pl-9"
+                />
+              </div>
+              <Select
+                value={datePreset}
+                onValueChange={(value) => setDatePreset(value as DatePreset)}
+              >
+                <SelectTrigger className="w-full lg:w-[150px]">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All sellers</SelectItem>
-                  {profiles.map((member) => (
-                    <SelectItem key={member.id} value={member.id}>
-                      {member.full_name}
+                  <SelectItem value="all">All dates</SelectItem>
+                  <SelectItem value="today">Today</SelectItem>
+                  <SelectItem value="week">This week</SelectItem>
+                  <SelectItem value="month">This month</SelectItem>
+                  <SelectItem value="custom">Custom range</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select
+                value={serviceFilter}
+                onValueChange={setServiceFilter}
+              >
+                <SelectTrigger className="w-full lg:w-[180px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All services</SelectItem>
+                  {serviceOptions.map((service) => (
+                    <SelectItem key={service} value={service}>
+                      {service}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+              <Select
+                value={upgradeFilter}
+                onValueChange={(value) =>
+                  setUpgradeFilter(value as UpgradeFilter)
+                }
+              >
+                <SelectTrigger className="w-full lg:w-[150px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All sale types</SelectItem>
+                  <SelectItem value="upgrade">Upgrades only</SelectItem>
+                  <SelectItem value="new">New business only</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select
+                value={paymentFilter}
+                onValueChange={(value) =>
+                  setPaymentFilter(value as "all" | PaymentStatus)
+                }
+              >
+                <SelectTrigger className="w-full lg:w-[150px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All payments</SelectItem>
+                  {PAYMENT_STATUSES.map((status) => (
+                    <SelectItem key={status} value={status}>
+                      {PAYMENT_STATUS_LABELS[status]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {isAdmin ? (
+                <Select value={sellerFilter} onValueChange={setSellerFilter}>
+                  <SelectTrigger className="w-full lg:w-[180px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All sellers</SelectItem>
+                    {profiles.map((member) => (
+                      <SelectItem key={member.id} value={member.id}>
+                        {member.full_name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : null}
+            </div>
+            {datePreset === "custom" ? (
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <Input
+                  type="date"
+                  value={customFrom}
+                  onChange={(event) => setCustomFrom(event.target.value)}
+                  className="w-full sm:w-[170px]"
+                  aria-label="From date"
+                />
+                <span className="text-xs text-muted-foreground">to</span>
+                <Input
+                  type="date"
+                  value={customTo}
+                  onChange={(event) => setCustomTo(event.target.value)}
+                  className="w-full sm:w-[170px]"
+                  aria-label="To date"
+                />
+              </div>
             ) : null}
           </div>
 
@@ -415,14 +564,16 @@ export default function SalesPage() {
             />
           ) : (
             <div className="overflow-x-auto">
-              <Table className="min-w-[920px]">
+              <Table className="min-w-[1180px]">
                 <TableHeader>
                   <TableRow>
                     <TableHead>Client</TableHead>
+                    <TableHead>Service sold</TableHead>
                     <TableHead>Sale date</TableHead>
                     <TableHead>Total</TableHead>
                     <TableHead>Received</TableHead>
                     <TableHead>Remaining</TableHead>
+                    <TableHead>Upgrade</TableHead>
                     <TableHead>Seller</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
@@ -434,19 +585,30 @@ export default function SalesPage() {
                       profileMap.get(sale.sold_by ?? "") ??
                       (sale.sold_by === profile.id ? profile : undefined);
                     return (
-                      <TableRow key={sale.id}>
+                      <TableRow
+                        key={sale.id}
+                        className="cursor-pointer"
+                        onClick={() => setDetailSaleId(sale.id)}
+                      >
                         <TableCell className="max-w-[220px]">
-                          <div className="flex items-center gap-2">
-                            <p className="truncate font-medium">
-                              {sale.client_name}
-                            </p>
-                            {sale.is_upgrade ? (
-                              <Badge variant="outline">Upgrade</Badge>
-                            ) : null}
-                          </div>
-                          <p className="truncate text-xs text-muted-foreground">
-                            {sale.service_sold || "—"}
+                          <button
+                            type="button"
+                            className="truncate text-left font-medium hover:underline"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setDetailSaleId(sale.id);
+                            }}
+                          >
+                            {sale.client_name}
+                          </button>
+                        </TableCell>
+                        <TableCell className="max-w-[200px]">
+                          <p className="truncate text-sm">
+                            {sale.service_sold || "Not specified"}
                           </p>
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap text-sm">
+                          {formatDate(sale.sale_date)}
                         </TableCell>
                         <TableCell className="whitespace-nowrap text-sm">
                           {formatDate(sale.sale_date)}
@@ -459,6 +621,13 @@ export default function SalesPage() {
                         </TableCell>
                         <TableCell className="whitespace-nowrap text-sm text-brand-orange">
                           {formatINR(sale.remaining_amount)}
+                        </TableCell>
+                        <TableCell>
+                          <Badge
+                            variant={sale.is_upgrade ? "outline" : "secondary"}
+                          >
+                            {sale.is_upgrade ? "Yes" : "No"}
+                          </Badge>
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-2">
@@ -482,7 +651,10 @@ export default function SalesPage() {
                         <TableCell>
                           <StatusBadge status={sale.payment_status} />
                         </TableCell>
-                        <TableCell className="text-right">
+                        <TableCell
+                          className="text-right"
+                          onClick={(event) => event.stopPropagation()}
+                        >
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                               <Button
@@ -490,10 +662,16 @@ export default function SalesPage() {
                                 size="icon-sm"
                                 aria-label="Sale actions"
                               >
-                                <span className="text-lg leading-none">···</span>
+                                <MoreHorizontal className="size-4" />
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
+                              <DropdownMenuItem
+                                onClick={() => setDetailSaleId(sale.id)}
+                              >
+                                <Receipt className="size-4" />
+                                View details
+                              </DropdownMenuItem>
                               <DropdownMenuItem
                                 disabled={!isAdmin}
                                 onClick={() => {
@@ -535,6 +713,19 @@ export default function SalesPage() {
         </CardContent>
       </Card>
 
+      <SaleDetailSheet
+        open={Boolean(detailSale)}
+        onOpenChange={(next) => {
+          if (!next) setDetailSaleId(null);
+        }}
+        sale={detailSale}
+        sales={sales}
+        profiles={profiles.length > 0 ? profiles : [profile]}
+        currentUserId={profile.id}
+        canManage={isAdmin}
+        onSelectSale={setDetailSaleId}
+      />
+
       {isAdmin ? (
         <>
           <SaleDialog
@@ -545,6 +736,7 @@ export default function SalesPage() {
               if (!next) setEditingSale(null);
             }}
             sale={editingSale}
+            sales={sales}
             leads={leadsQuery.data ?? []}
             profiles={profiles.length > 0 ? profiles : [profile]}
             currentUserId={profile.id}

@@ -27,13 +27,14 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { createClient } from "@/lib/supabase/client";
-import { toNumber } from "@/lib/utils";
+import { formatDate, formatINR, toNumber } from "@/lib/utils";
 import type { Lead, Profile, Sale } from "@/types/database";
 
 type SaleDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   sale?: Sale | null;
+  sales: Sale[];
   leads: Lead[];
   profiles: Profile[];
   currentUserId: string;
@@ -43,6 +44,7 @@ export function SaleDialog({
   open,
   onOpenChange,
   sale,
+  sales,
   leads,
   profiles,
   currentUserId,
@@ -60,6 +62,9 @@ export function SaleDialog({
   const [initialPaid, setInitialPaid] = useState("0");
   const [soldBy, setSoldBy] = useState(sale?.sold_by ?? currentUserId);
   const [isUpgrade, setIsUpgrade] = useState(sale?.is_upgrade ?? false);
+  const [upgradeFromSaleId, setUpgradeFromSaleId] = useState(
+    sale?.upgrade_from_sale_id ?? "none",
+  );
   const [notes, setNotes] = useState(sale?.notes ?? "");
 
   const selectLead = (value: string) => {
@@ -71,12 +76,30 @@ export function SaleDialog({
     if (lead.expected_value) setTotalAmount(String(lead.expected_value));
   };
 
+  const selectUpgradeParent = (value: string) => {
+    setUpgradeFromSaleId(value);
+    const parent = sales.find((item) => item.id === value);
+    if (!parent) return;
+    if (!clientName.trim()) setClientName(parent.client_name);
+    if (!serviceSold.trim()) setServiceSold(parent.service_sold ?? "");
+  };
+
+  const upgradeCandidates = sales.filter((item) => item.id !== sale?.id);
+
   const mutation = useMutation({
     mutationFn: async (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault();
       const supabase = createClient();
       const total = Number(totalAmount);
       const paid = Number(initialPaid) || 0;
+
+      if (!clientName.trim()) throw new Error("Client name is required");
+      if (!Number.isFinite(total) || total <= 0) {
+        throw new Error("Enter a valid sale amount");
+      }
+      if (isUpgrade && upgradeFromSaleId === "none") {
+        throw new Error("Select the sale this upgrade belongs to");
+      }
 
       if (sale) {
         const received = toNumber(sale.received_amount);
@@ -97,6 +120,10 @@ export function SaleDialog({
               remaining <= 0 ? "paid" : received > 0 ? "partial" : "pending",
             sold_by: soldBy,
             is_upgrade: isUpgrade,
+            upgrade_from_sale_id:
+              isUpgrade && upgradeFromSaleId !== "none"
+                ? upgradeFromSaleId
+                : null,
             notes: notes.trim() || null,
           })
           .eq("id", sale.id);
@@ -117,6 +144,10 @@ export function SaleDialog({
           payment_status: "pending",
           sold_by: soldBy,
           is_upgrade: isUpgrade,
+          upgrade_from_sale_id:
+            isUpgrade && upgradeFromSaleId !== "none"
+              ? upgradeFromSaleId
+              : null,
           notes: notes.trim() || null,
         })
         .select("id")
@@ -260,7 +291,10 @@ export function SaleDialog({
             <Switch
               id="sale-upgrade"
               checked={isUpgrade}
-              onCheckedChange={setIsUpgrade}
+              onCheckedChange={(checked) => {
+                setIsUpgrade(checked);
+                if (!checked) setUpgradeFromSaleId("none");
+              }}
             />
             <div>
               <Label htmlFor="sale-upgrade">This is an upgrade</Label>
@@ -269,6 +303,34 @@ export function SaleDialog({
               </p>
             </div>
           </div>
+
+          {isUpgrade ? (
+            <div className="space-y-2">
+              <Label>Upgrades which sale?</Label>
+              <Select
+                value={upgradeFromSaleId}
+                onValueChange={selectUpgradeParent}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Select the previous sale" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Select previous sale</SelectItem>
+                  {upgradeCandidates.map((item) => (
+                    <SelectItem key={item.id} value={item.id}>
+                      {item.client_name} - {formatDate(item.sale_date)} -{" "}
+                      {formatINR(item.total_amount)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {upgradeCandidates.length === 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  Record the original sale first, then link this upgrade to it.
+                </p>
+              ) : null}
+            </div>
+          ) : null}
 
           <div className="space-y-2">
             <Label htmlFor="sale-notes">Notes</Label>
@@ -295,7 +357,8 @@ export function SaleDialog({
                 mutation.isPending ||
                 !clientName.trim() ||
                 !totalAmount ||
-                Number(totalAmount) <= 0
+                Number(totalAmount) <= 0 ||
+                (isUpgrade && upgradeFromSaleId === "none")
               }
             >
               {mutation.isPending ? (

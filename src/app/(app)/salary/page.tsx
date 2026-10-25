@@ -1,21 +1,30 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import {
   BadgeIndianRupee,
   CalendarDays,
+  CheckCircle2,
+  Download,
   IndianRupee,
+  MoreHorizontal,
+  Printer,
   Search,
   Settings2,
+  Sparkles,
   Target as TargetIcon,
   UserRound,
   Wallet,
 } from "lucide-react";
 import { useMemo, useState } from "react";
+import { toast } from "sonner";
+import * as XLSX from "xlsx";
 
+import { ManualIncentiveDialog } from "@/components/salary/manual-incentive-dialog";
 import { PayoutDialog } from "@/components/salary/payout-dialog";
 import { SalaryConfigDialog } from "@/components/salary/salary-config-dialog";
+import { SalarySlipDialog } from "@/components/salary/salary-slip-dialog";
 import { TargetDialog } from "@/components/salary/target-dialog";
 import { EmptyState } from "@/components/shared/empty-state";
 import { ErrorState } from "@/components/shared/error-state";
@@ -50,9 +59,11 @@ import {
   formatDate,
   formatINR,
   formatPercent,
+  todayISO,
   toNumber,
 } from "@/lib/utils";
 import type {
+  Incentive,
   SalaryConfig,
   SalaryMonthly,
   SalaryPayout,
@@ -61,11 +72,14 @@ import type {
 
 export default function SalaryPage() {
   const { profile, role, loading: roleLoading, error: roleError } = useRole();
+  const queryClient = useQueryClient();
   const isAdmin = isAdminRole(role);
   const isOwner = role === "owner";
   const [month, setMonth] = useState(format(new Date(), "yyyy-MM"));
   const [search, setSearch] = useState("");
   const [payoutRow, setPayoutRow] = useState<SalaryMonthly | null>(null);
+  const [manualRow, setManualRow] = useState<SalaryMonthly | null>(null);
+  const [slipRow, setSlipRow] = useState<SalaryMonthly | null>(null);
   const [configRow, setConfigRow] = useState<SalaryMonthly | null>(null);
   const [targetRow, setTargetRow] = useState<SalaryMonthly | null>(null);
 
@@ -98,16 +112,36 @@ export default function SalaryPage() {
   });
 
   const payoutsQuery = useQuery({
-    queryKey: ["salary-payouts", month],
-    enabled: isAdmin,
+    queryKey: ["salary-payouts", month, isAdmin ? "team" : profile?.id],
+    enabled: Boolean(profile?.id),
     queryFn: async () => {
       const supabase = createClient();
-      const { data, error } = await supabase
+      let query = supabase
         .from("salary_payouts")
         .select("*")
         .eq("month", monthDate);
+      if (!isAdmin) {
+        query = query.eq("user_id", profile!.id);
+      }
+      const { data, error } = await query;
       if (error) throw error;
       return (data ?? []) as SalaryPayout[];
+    },
+  });
+
+  const incentivesQuery = useQuery({
+    queryKey: ["incentives", "member", profile?.id, month],
+    enabled: Boolean(profile?.id) && !isAdmin,
+    queryFn: async () => {
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from("incentives")
+        .select("*")
+        .eq("user_id", profile!.id)
+        .eq("month", monthDate)
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return (data ?? []) as Incentive[];
     },
   });
 
@@ -189,6 +223,74 @@ export default function SalaryPage() {
     [rows],
   );
 
+  const markPaidMutation = useMutation({
+    mutationFn: async (item: SalaryMonthly) => {
+      if (!item.user_id) throw new Error("Missing member");
+      const supabase = createClient();
+      const payout = payoutMap.get(item.user_id);
+      const payload = {
+        user_id: item.user_id,
+        month: monthDate,
+        bonus: payout?.bonus ?? toNumber(item.bonus),
+        deduction: payout?.deduction ?? toNumber(item.deduction),
+        status: "paid",
+        paid_on: payout?.paid_on ?? todayISO(),
+      };
+
+      if (payout) {
+        const { error } = await supabase
+          .from("salary_payouts")
+          .update(payload)
+          .eq("id", payout.id);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from("salary_payouts")
+          .insert(payload);
+        if (error) throw error;
+      }
+    },
+    onSuccess: () => {
+      toast.success("Salary marked as paid");
+      void queryClient.invalidateQueries({ queryKey: ["salary"] });
+      void queryClient.invalidateQueries({ queryKey: ["salary-payouts"] });
+      void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Update failed");
+    },
+  });
+
+  const exportPayroll = () => {
+    if (filteredRows.length === 0) {
+      toast.error("There is no payroll to export");
+      return;
+    }
+
+    const data = filteredRows.map((item) => ({
+      member: item.full_name ?? "",
+      role: item.role ? ROLE_LABELS[item.role as Role] : "Member",
+      month: item.month ?? monthDate,
+      base_salary: toNumber(item.base_salary),
+      task_incentive: toNumber(item.task_incentive),
+      sales_incentive: toNumber(item.sales_incentive),
+      manual_incentive: toNumber(item.manual_incentive),
+      bonus: toNumber(item.bonus),
+      deduction: toNumber(item.deduction),
+      total_salary: toNumber(item.total_salary),
+      target_amount: toNumber(item.target_amount),
+      achieved: toNumber(item.achieved),
+      target_pct: toNumber(item.target_pct),
+      target_stage: item.target_stage ?? "",
+      payout_status: item.payout_status ?? "pending",
+      paid_on: payoutMap.get(item.user_id ?? "")?.paid_on ?? "",
+    }));
+    const worksheet = XLSX.utils.json_to_sheet(data);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Salary");
+    XLSX.writeFile(workbook, `salary-${month}.xlsx`);
+  };
+
   if (roleLoading) {
     return (
       <div className="space-y-4">
@@ -228,14 +330,29 @@ export default function SalaryPage() {
         }
         eyebrow="Compensation"
         actions={
-          <div className="flex items-center gap-2">
-            <CalendarDays className="size-4 text-muted-foreground" />
-            <Input
-              type="month"
-              value={month}
-              onChange={(event) => setMonth(event.target.value)}
-              className="w-[170px]"
-            />
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-2">
+              <CalendarDays className="size-4 text-muted-foreground" />
+              <Input
+                type="month"
+                value={month}
+                onChange={(event) => {
+                  if (event.target.value) setMonth(event.target.value);
+                }}
+                className="w-[170px]"
+              />
+            </div>
+            {isAdmin ? (
+              <Button variant="outline" onClick={exportPayroll}>
+                <Download className="size-4" />
+                Export
+              </Button>
+            ) : row ? (
+              <Button variant="outline" onClick={() => setSlipRow(row)}>
+                <Printer className="size-4" />
+                Salary slip
+              </Button>
+            ) : null}
           </div>
         }
       />
@@ -361,7 +478,7 @@ export default function SalaryPage() {
                                   {formatPercent(item.target_pct)}
                                 </span>
                                 <span className="capitalize">
-                                  {item.target_stage ?? "—"}
+                                  {item.target_stage ?? "No target"}
                                 </span>
                               </div>
                               <Progress
@@ -393,9 +510,7 @@ export default function SalaryPage() {
                                   size="icon-sm"
                                   aria-label="Payroll actions"
                                 >
-                                  <span className="text-lg leading-none">
-                                    ···
-                                  </span>
+                                  <MoreHorizontal className="size-4" />
                                 </Button>
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end">
@@ -405,6 +520,27 @@ export default function SalaryPage() {
                                   <Settings2 className="size-4" />
                                   Adjust payroll
                                 </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onClick={() => setManualRow(item)}
+                                >
+                                  <Sparkles className="size-4" />
+                                  Manual incentive
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onClick={() => setSlipRow(item)}
+                                >
+                                  <Printer className="size-4" />
+                                  Salary slip
+                                </DropdownMenuItem>
+                                {item.payout_status !== "paid" ? (
+                                  <DropdownMenuItem
+                                    disabled={markPaidMutation.isPending}
+                                    onClick={() => markPaidMutation.mutate(item)}
+                                  >
+                                    <CheckCircle2 className="size-4" />
+                                    Mark as paid
+                                  </DropdownMenuItem>
+                                ) : null}
                                 {isOwner ? (
                                   <>
                                     <DropdownMenuItem
@@ -543,7 +679,11 @@ export default function SalaryPage() {
                     <p className="text-sm font-medium">Payout status</p>
                     <p className="text-xs text-muted-foreground">
                       {row.payout_status === "paid"
-                        ? "Your salary has been paid."
+                        ? payoutMap.get(row.user_id ?? "")?.paid_on
+                          ? `Paid on ${formatDate(
+                              payoutMap.get(row.user_id ?? "")?.paid_on,
+                            )}.`
+                          : "Your salary has been paid."
                         : "Payment is pending."}
                     </p>
                   </div>
@@ -552,6 +692,48 @@ export default function SalaryPage() {
               </CardContent>
             </Card>
           </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Incentive history</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {incentivesQuery.isLoading ? (
+                <div className="space-y-2">
+                  <Skeleton className="h-12 w-full" />
+                  <Skeleton className="h-12 w-full" />
+                </div>
+              ) : incentivesQuery.error ? (
+                <p className="text-sm text-destructive">
+                  Incentive history could not be loaded.
+                </p>
+              ) : (incentivesQuery.data ?? []).length === 0 ? (
+                <p className="py-4 text-center text-sm text-muted-foreground">
+                  No incentives recorded for this month.
+                </p>
+              ) : (
+                (incentivesQuery.data ?? []).map((incentive) => (
+                  <div
+                    key={incentive.id}
+                    className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium">
+                        {formatINR(incentive.amount)}
+                      </p>
+                      <p className="truncate text-xs text-muted-foreground">
+                        {formatDate(incentive.created_at)}
+                        {incentive.note ? ` - ${incentive.note}` : ""}
+                      </p>
+                    </div>
+                    <Badge variant="secondary" className="capitalize">
+                      {incentive.source}
+                    </Badge>
+                  </div>
+                ))
+              )}
+            </CardContent>
+          </Card>
         </>
       )}
 
@@ -564,6 +746,32 @@ export default function SalaryPage() {
           }}
           row={payoutRow}
           payout={payoutMap.get(payoutRow.user_id ?? "") ?? null}
+          month={month}
+        />
+      ) : null}
+
+      {isAdmin && manualRow ? (
+        <ManualIncentiveDialog
+          key={`manual-${manualRow.user_id}-${month}`}
+          open={Boolean(manualRow)}
+          onOpenChange={(open) => {
+            if (!open) setManualRow(null);
+          }}
+          row={manualRow}
+          month={month}
+          currentUserId={profile.id}
+        />
+      ) : null}
+
+      {slipRow ? (
+        <SalarySlipDialog
+          key={`slip-${slipRow.user_id}-${month}`}
+          open={Boolean(slipRow)}
+          onOpenChange={(open) => {
+            if (!open) setSlipRow(null);
+          }}
+          row={slipRow}
+          payout={payoutMap.get(slipRow.user_id ?? "") ?? null}
           month={month}
         />
       ) : null}

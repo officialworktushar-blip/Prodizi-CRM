@@ -161,3 +161,33 @@
     @apply bg-background text-foreground;
   }
 }
+
+@media print {
+  @page {
+    margin: 12mm;
+  }
+
+  body * {
+    visibility: hidden !important;
+  }
+
+  #salary-slip,
+  #salary-slip * {
+    visibility: visible !important;
+  }
+
+  #salary-slip {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    max-width: none;
+    padding: 0;
+    border: 0;
+    background: white;
+    color: black;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+}
