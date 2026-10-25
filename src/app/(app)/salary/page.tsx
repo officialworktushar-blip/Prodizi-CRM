@@ -51,6 +51,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { useNow } from "@/hooks/use-now";
 import { useRole } from "@/hooks/use-role";
 import { ROLE_LABELS, type Role } from "@/lib/constants";
 import { isAdminRole } from "@/lib/permissions";
@@ -75,7 +76,9 @@ export default function SalaryPage() {
   const queryClient = useQueryClient();
   const isAdmin = isAdminRole(role);
   const isOwner = role === "owner";
-  const [month, setMonth] = useState(format(new Date(), "yyyy-MM"));
+  const now = useNow();
+  const [monthOverride, setMonth] = useState<string | null>(null);
+  const month = monthOverride ?? (now ? format(now, "yyyy-MM") : "");
   const [search, setSearch] = useState("");
   const [payoutRow, setPayoutRow] = useState<SalaryMonthly | null>(null);
   const [manualRow, setManualRow] = useState<SalaryMonthly | null>(null);
@@ -83,11 +86,11 @@ export default function SalaryPage() {
   const [configRow, setConfigRow] = useState<SalaryMonthly | null>(null);
   const [targetRow, setTargetRow] = useState<SalaryMonthly | null>(null);
 
-  const monthDate = `${month}-01`;
+  const monthDate = month ? `${month}-01` : "";
 
   const salaryQuery = useQuery({
     queryKey: ["salary", "monthly", month, profile?.id, role],
-    enabled: Boolean(profile?.id),
+    enabled: Boolean(profile?.id) && Boolean(month),
     queryFn: async () => {
       const supabase = createClient();
       if (!isAdmin) {
@@ -113,7 +116,7 @@ export default function SalaryPage() {
 
   const payoutsQuery = useQuery({
     queryKey: ["salary-payouts", month, isAdmin ? "team" : profile?.id],
-    enabled: Boolean(profile?.id),
+    enabled: Boolean(profile?.id) && Boolean(month),
     queryFn: async () => {
       const supabase = createClient();
       let query = supabase
@@ -131,7 +134,7 @@ export default function SalaryPage() {
 
   const incentivesQuery = useQuery({
     queryKey: ["incentives", "member", profile?.id, month],
-    enabled: Boolean(profile?.id) && !isAdmin,
+    enabled: Boolean(profile?.id) && Boolean(month) && !isAdmin,
     queryFn: async () => {
       const supabase = createClient();
       const { data, error } = await supabase
@@ -160,7 +163,7 @@ export default function SalaryPage() {
 
   const targetsQuery = useQuery({
     queryKey: ["targets", month],
-    enabled: isOwner,
+    enabled: isOwner && Boolean(month),
     queryFn: async () => {
       const supabase = createClient();
       const { data, error } = await supabase
@@ -291,7 +294,7 @@ export default function SalaryPage() {
     XLSX.writeFile(workbook, `salary-${month}.xlsx`);
   };
 
-  if (roleLoading) {
+  if (roleLoading || !month) {
     return (
       <div className="space-y-4">
         <Skeleton className="h-10 w-64" />

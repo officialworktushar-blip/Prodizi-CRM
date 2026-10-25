@@ -66,6 +66,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { useNow } from "@/hooks/use-now";
 import { useRole } from "@/hooks/use-role";
 import {
   LEAD_FREQUENCIES,
@@ -110,6 +111,8 @@ export default function LeadsPage() {
   const [confirmTarget, setConfirmTarget] = useState<Lead | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [bulkAssignee, setBulkAssignee] = useState("");
+  const now = useNow();
+  const today = now ? todayISO(now) : "";
 
   const leadsQuery = useQuery({
     queryKey: ["leads", profile?.id, role],
@@ -250,10 +253,9 @@ export default function LeadsPage() {
 
   const filteredLeads = useMemo(() => {
     const needle = search.trim().toLowerCase();
-    const now = new Date();
-    const upcomingEnd = new Date(now);
-    upcomingEnd.setDate(upcomingEnd.getDate() + 7);
-    const upcomingEndISO = upcomingEnd.toISOString().slice(0, 10);
+    const upcomingEnd = now ? new Date(now) : null;
+    if (upcomingEnd) upcomingEnd.setDate(upcomingEnd.getDate() + 7);
+    const upcomingEndISO = upcomingEnd ? todayISO(upcomingEnd) : "";
     return leads.filter((lead) => {
       if (statusFilter !== "all" && lead.status !== statusFilter) return false;
       if (kindFilter !== "all" && lead.kind !== kindFilter) return false;
@@ -275,7 +277,11 @@ export default function LeadsPage() {
       if (toDate && (!followUp || followUp > toDate)) return false;
       if (
         view === "upcoming" &&
-        (!followUp || followUp < todayISO() || followUp > upcomingEndISO)
+        (!today ||
+          !upcomingEndISO ||
+          !followUp ||
+          followUp < today ||
+          followUp > upcomingEndISO)
       ) {
         return false;
       }
@@ -302,6 +308,8 @@ export default function LeadsPage() {
     view,
     search,
     isAdmin,
+    now,
+    today,
   ]);
 
   const counts = useMemo(
@@ -788,8 +796,9 @@ export default function LeadsPage() {
                       (lead.assigned_to === profile.id ? profile : undefined);
                     const canEdit = canEditLead(role, profile.id, lead);
                     const followUpOverdue =
+                      today &&
                       lead.next_follow_up &&
-                      lead.next_follow_up < todayISO() &&
+                      lead.next_follow_up < today &&
                       lead.status !== "confirmed" &&
                       lead.status !== "cancelled";
                     return (

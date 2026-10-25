@@ -37,6 +37,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useNow } from "@/hooks/use-now";
 import { createClient } from "@/lib/supabase/client";
 import { formatDate, formatINR, toNumber } from "@/lib/utils";
 import type { Payment, Sale } from "@/types/database";
@@ -57,8 +58,11 @@ export function PaymentDialog({
   currentUserId,
 }: PaymentDialogProps) {
   const queryClient = useQueryClient();
+  const now = useNow();
   const [amount, setAmount] = useState("");
-  const [paidOn, setPaidOn] = useState(format(new Date(), "yyyy-MM-dd"));
+  const [paidOnOverride, setPaidOn] = useState<string | null>(null);
+  const paidOn =
+    paidOnOverride ?? (open && now ? format(now, "yyyy-MM-dd") : "");
   const [mode, setMode] = useState("UPI");
   const [note, setNote] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<Payment | null>(null);

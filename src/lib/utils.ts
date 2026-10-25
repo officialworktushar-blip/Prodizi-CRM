@@ -73,17 +73,20 @@ export function formatRelative(
   return date ? formatDistanceToNow(date, { addSuffix: true }) : "—";
 }
 
-export function todayISO() {
-  return format(new Date(), "yyyy-MM-dd");
+export function todayISO(value: Date = new Date()) {
+  return format(value, "yyyy-MM-dd");
 }
 
-export function isTaskOverdue(task: {
-  due_date: string | null;
-  status: string;
-}) {
+export function isTaskOverdue(
+  task: {
+    due_date: string | null;
+    status: string;
+  },
+  today = todayISO(),
+) {
   return Boolean(
     task.due_date &&
-    task.due_date < todayISO() &&
+    task.due_date < today &&
     task.status !== "completed" &&
     task.status !== "cancelled",
   );

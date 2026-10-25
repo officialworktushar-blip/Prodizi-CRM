@@ -70,6 +70,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { useNow } from "@/hooks/use-now";
 import { useRole } from "@/hooks/use-role";
 import {
   PAYMENT_STATUSES,
@@ -111,6 +112,7 @@ export default function SalesPage() {
   const [paymentSale, setPaymentSale] = useState<Sale | null>(null);
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Sale | null>(null);
+  const now = useNow();
 
   const salesQuery = useQuery({
     queryKey: ["sales", profile?.id, role],
@@ -191,7 +193,12 @@ export default function SalesPage() {
   const sales = useMemo(() => salesQuery.data ?? [], [salesQuery.data]);
 
   const dateRange = useMemo(() => {
-    const now = new Date();
+    if (datePreset === "custom") {
+      return { from: customFrom || null, to: customTo || null };
+    }
+    if (!now) {
+      return { from: null, to: null };
+    }
     if (datePreset === "today") {
       const value = format(now, "yyyy-MM-dd");
       return { from: value, to: value };
@@ -208,11 +215,8 @@ export default function SalesPage() {
         to: format(endOfMonth(now), "yyyy-MM-dd"),
       };
     }
-    if (datePreset === "custom") {
-      return { from: customFrom || null, to: customTo || null };
-    }
     return { from: null, to: null };
-  }, [datePreset, customFrom, customTo]);
+  }, [datePreset, customFrom, customTo, now]);
 
   const serviceOptions = useMemo(
     () =>

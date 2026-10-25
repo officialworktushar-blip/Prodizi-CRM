@@ -3,7 +3,6 @@ import type { Metadata } from "next";
 import { LeadDetail } from "@/components/leads/lead-detail";
 
 export const metadata: Metadata = { title: "Lead" };
-export const instant = false;
 
 export default async function LeadDetailPage({
   params,

@@ -69,6 +69,7 @@ type TaskBoardProps = {
   onDelete: (task: Task) => void;
   onStatusChange: (task: Task, status: TaskStatus) => void;
   pendingStatus: boolean;
+  today: string;
 };
 
 type TaskCardProps = Omit<TaskBoardProps, "tasks"> & {
@@ -85,8 +86,9 @@ function TaskCard({
   onEdit,
   onDelete,
   pendingStatus,
+  today,
 }: TaskCardProps) {
-  const overdue = isTaskOverdue(task);
+  const overdue = isTaskOverdue(task, today);
   const canDrag = canChangeStatus(task) && !pendingStatus;
   const { attributes, listeners, setNodeRef, transform, isDragging } =
     useDraggable({
@@ -165,7 +167,7 @@ function TaskCard({
         <Badge variant="secondary" className="whitespace-nowrap">
           {TASK_TYPE_LABELS[task.task_type as TaskType] ?? task.task_type}
         </Badge>
-        <TaskOverdueBadge task={task} />
+        <TaskOverdueBadge task={task} today={today} />
         {lead ? <TaskLeadChip lead={lead} /> : null}
       </div>
 

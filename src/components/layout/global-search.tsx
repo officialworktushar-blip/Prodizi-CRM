@@ -35,7 +35,6 @@ export function GlobalSearch() {
   const deferredTerm = useDeferredValue(term);
   const searchTerm = deferredTerm.trim();
   const pattern = `%${searchTerm}%`;
-  const supabase = createClient();
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -54,6 +53,7 @@ export function GlobalSearch() {
     enabled: open && Boolean(role),
     staleTime: 30_000,
     queryFn: async () => {
+      const supabase = createClient();
       const leadsQuery = supabase
         .from("leads")
         .select("id, client_name, company, status")

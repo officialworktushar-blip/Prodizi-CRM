@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useNow } from "@/hooks/use-now";
 import { useRole } from "@/hooks/use-role";
 import { ROLE_LABELS } from "@/lib/constants";
 import { canManageMember, isAdminRole } from "@/lib/permissions";
@@ -61,7 +62,8 @@ export function MemberDetail({ memberId }: { memberId: string }) {
   const { role, loading: roleLoading } = useRole();
   const isAdmin = isAdminRole(role);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const month = monthStartISO();
+  const now = useNow();
+  const month = now ? monthStartISO(now) : "";
 
   const memberQuery = useQuery({
     queryKey: ["profiles", "detail", memberId],
@@ -79,7 +81,7 @@ export function MemberDetail({ memberId }: { memberId: string }) {
 
   const relatedQuery = useQuery({
     queryKey: ["profiles", "related", memberId, month],
-    enabled: Boolean(memberQuery.data),
+    enabled: Boolean(memberQuery.data) && Boolean(month),
     queryFn: async () => {
       const supabase = createClient();
       const [stats, tasks, leads, config, salary, sales, incentives, target, profiles] =
@@ -157,7 +159,7 @@ export function MemberDetail({ memberId }: { memberId: string }) {
     },
   });
 
-  if (roleLoading || memberQuery.isLoading) {
+  if (roleLoading || memberQuery.isLoading || !now) {
     return (
       <div className="space-y-4">
         <Skeleton className="h-10 w-64" />
@@ -220,7 +222,7 @@ export function MemberDetail({ memberId }: { memberId: string }) {
   const manager = profiles.find((item) => item.id === member.manager_id);
   const showSalary = role === "owner" || role === "manager";
   const monthKeys = Array.from({ length: 6 }).map((_, index) => {
-    const date = new Date();
+    const date = new Date(now);
     date.setMonth(date.getMonth() - (5 - index));
     return {
       key: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`,

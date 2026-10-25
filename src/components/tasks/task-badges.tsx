@@ -43,8 +43,14 @@ export function TaskIncentiveBadge({ task }: { task: Task }) {
   );
 }
 
-export function TaskOverdueBadge({ task }: { task: Task }) {
-  if (!isTaskOverdue(task)) return null;
+export function TaskOverdueBadge({
+  task,
+  today,
+}: {
+  task: Task;
+  today: string;
+}) {
+  if (!isTaskOverdue(task, today)) return null;
 
   return (
     <Badge

@@ -30,6 +30,7 @@ import {
   ROLE_LABELS,
   type Role,
 } from "@/lib/constants";
+import { useNow } from "@/hooks/use-now";
 import { createClient } from "@/lib/supabase/client";
 import type { Profile, SalaryConfig } from "@/types/database";
 
@@ -53,6 +54,7 @@ export function MemberDialog({
   actorRole,
 }: MemberDialogProps) {
   const queryClient = useQueryClient();
+  const now = useNow();
   const [fullName, setFullName] = useState(member?.full_name ?? "");
   const [email, setEmail] = useState(member?.email ?? "");
   const [password, setPassword] = useState("");
@@ -66,9 +68,11 @@ export function MemberDialog({
     member?.dedicated_work ?? "",
   );
   const [managerId, setManagerId] = useState(member?.manager_id ?? "");
-  const [joinedOn, setJoinedOn] = useState(
-    member?.joined_on ?? format(new Date(), "yyyy-MM-dd"),
+  const [joinedOnOverride, setJoinedOn] = useState<string | null>(
+    member?.joined_on ?? null,
   );
+  const joinedOn =
+    joinedOnOverride ?? (open && now ? format(now, "yyyy-MM-dd") : "");
   const [baseSalary, setBaseSalary] = useState(
     String(salaryConfig?.base_salary ?? 0),
   );

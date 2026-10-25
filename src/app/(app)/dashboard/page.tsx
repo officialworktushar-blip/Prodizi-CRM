@@ -50,6 +50,7 @@ import {
 } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useNow } from "@/hooks/use-now";
 import { useRole } from "@/hooks/use-role";
 import {
   BRAND_COLORS,
@@ -133,6 +134,7 @@ function ChartTooltip({
 
 function AdminDashboard() {
   const { profile } = useRole();
+  const now = useNow();
   const query = useQuery({
     queryKey: ["dashboard", "admin"],
     queryFn: async () => {
@@ -181,7 +183,7 @@ function AdminDashboard() {
     },
   });
 
-  if (query.isLoading) return <DashboardSkeleton />;
+  if (query.isLoading || !now) return <DashboardSkeleton />;
   if (query.error) {
     return (
       <ErrorState
@@ -242,7 +244,7 @@ function AdminDashboard() {
     .filter((item) => item.value > 0);
 
   const revenueData = Array.from({ length: 6 }).map((_, index) => {
-    const month = subMonths(startOfMonth(new Date()), 5 - index);
+    const month = subMonths(startOfMonth(now), 5 - index);
     const key = format(month, "yyyy-MM");
     return {
       month: format(month, "MMM"),

@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { useNow } from "@/hooks/use-now";
 import { createClient } from "@/lib/supabase/client";
 import { formatDate, formatINR, toNumber } from "@/lib/utils";
 import type { Lead, Profile, Sale } from "@/types/database";
@@ -50,12 +51,15 @@ export function SaleDialog({
   currentUserId,
 }: SaleDialogProps) {
   const queryClient = useQueryClient();
+  const now = useNow();
   const [leadId, setLeadId] = useState(sale?.lead_id ?? "none");
   const [clientName, setClientName] = useState(sale?.client_name ?? "");
   const [serviceSold, setServiceSold] = useState(sale?.service_sold ?? "");
-  const [saleDate, setSaleDate] = useState(
-    sale?.sale_date ?? format(new Date(), "yyyy-MM-dd"),
+  const [saleDateOverride, setSaleDate] = useState<string | null>(
+    sale?.sale_date ?? null,
   );
+  const saleDate =
+    saleDateOverride ?? (open && now ? format(now, "yyyy-MM-dd") : "");
   const [totalAmount, setTotalAmount] = useState(
     String(sale?.total_amount ?? ""),
   );

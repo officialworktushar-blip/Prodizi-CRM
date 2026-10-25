@@ -50,6 +50,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { useNow } from "@/hooks/use-now";
 import { useRole } from "@/hooks/use-role";
 import {
   ROLES,
@@ -80,6 +81,8 @@ export default function TeamPage() {
   const [view, setView] = useState<"grid" | "table">("grid");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingMember, setEditingMember] = useState<Profile | null>(null);
+  const now = useNow();
+  const month = now ? monthStartISO(now) : "";
 
   const profilesQuery = useQuery({
     queryKey: ["profiles", "team"],
@@ -120,14 +123,14 @@ export default function TeamPage() {
   });
 
   const targetQuery = useQuery({
-    queryKey: ["targets", "team", monthStartISO()],
-    enabled: role === "owner",
+    queryKey: ["targets", "team", month],
+    enabled: role === "owner" && Boolean(month),
     queryFn: async () => {
       const supabase = createClient();
       const { data, error } = await supabase
         .from("targets")
         .select("*")
-        .eq("month", monthStartISO());
+        .eq("month", month);
       if (error) throw error;
       return (data ?? []) as Target[];
     },
@@ -196,7 +199,7 @@ export default function TeamPage() {
         stats.length
       : 0;
 
-  if (roleLoading) {
+  if (roleLoading || !now) {
     return (
       <div className="space-y-4">
         <Skeleton className="h-10 w-64" />

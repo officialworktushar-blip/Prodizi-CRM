@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bell, CheckCheck } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useMemo } from "react";
+import { useEffect } from "react";
 import { toast } from "sonner";
 
 import { EmptyState } from "@/components/shared/empty-state";
@@ -21,11 +21,11 @@ import type { Notification } from "@/types/database";
 
 export function NotificationsMenu({ userId }: { userId: string }) {
   const queryClient = useQueryClient();
-  const supabase = useMemo(() => createClient(), []);
 
   const query = useQuery({
     queryKey: ["notifications", userId],
     queryFn: async () => {
+      const supabase = createClient();
       const { data, error } = await supabase
         .from("notifications")
         .select("*")
@@ -38,6 +38,7 @@ export function NotificationsMenu({ userId }: { userId: string }) {
   });
 
   useEffect(() => {
+    const supabase = createClient();
     const channel = supabase
       .channel(`notifications-${userId}`)
       .on(
@@ -61,11 +62,12 @@ export function NotificationsMenu({ userId }: { userId: string }) {
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [supabase, queryClient, userId]);
+  }, [queryClient, userId]);
 
   const markRead = useMutation({
     mutationFn: async (notification: Notification) => {
       if (notification.is_read) return;
+      const supabase = createClient();
       const { error } = await supabase
         .from("notifications")
         .update({ is_read: true })
@@ -81,6 +83,7 @@ export function NotificationsMenu({ userId }: { userId: string }) {
 
   const markAllRead = useMutation({
     mutationFn: async () => {
+      const supabase = createClient();
       const { error } = await supabase
         .from("notifications")
         .update({ is_read: true })

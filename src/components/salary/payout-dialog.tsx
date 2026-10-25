@@ -24,6 +24,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useNow } from "@/hooks/use-now";
 import { createClient } from "@/lib/supabase/client";
 import type { SalaryMonthly, SalaryPayout } from "@/types/database";
 
@@ -43,6 +44,7 @@ export function PayoutDialog({
   month,
 }: PayoutDialogProps) {
   const queryClient = useQueryClient();
+  const now = useNow();
   const [bonus, setBonus] = useState(String(payout?.bonus ?? row.bonus ?? 0));
   const [deduction, setDeduction] = useState(
     String(payout?.deduction ?? row.deduction ?? 0),
@@ -50,9 +52,11 @@ export function PayoutDialog({
   const [status, setStatus] = useState(
     (payout?.status ?? row.payout_status) === "paid" ? "paid" : "pending",
   );
-  const [paidOn, setPaidOn] = useState(
-    payout?.paid_on ?? format(new Date(), "yyyy-MM-dd"),
+  const [paidOnOverride, setPaidOn] = useState<string | null>(
+    payout?.paid_on ?? null,
   );
+  const paidOn =
+    paidOnOverride ?? (open && now ? format(now, "yyyy-MM-dd") : "");
 
   const mutation = useMutation({
     mutationFn: async (event: FormEvent<HTMLFormElement>) => {

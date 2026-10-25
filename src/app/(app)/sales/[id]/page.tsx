@@ -3,7 +3,6 @@ import type { Metadata } from "next";
 import { SaleDetail } from "@/components/sales/sale-detail";
 
 export const metadata: Metadata = { title: "Sale" };
-export const instant = false;
 
 export default async function SaleDetailPage({
   params,

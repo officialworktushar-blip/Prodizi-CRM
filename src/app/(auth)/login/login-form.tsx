@@ -9,6 +9,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useNow } from "@/hooks/use-now";
 import { createClient } from "@/lib/supabase/client";
 
 type LoginFormProps = {
@@ -18,6 +19,7 @@ type LoginFormProps = {
 
 export function LoginForm({ redirectTo, reason }: LoginFormProps) {
   const router = useRouter();
+  const now = useNow();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(
@@ -131,7 +133,7 @@ export function LoginForm({ redirectTo, reason }: LoginFormProps) {
       </div>
 
       <p className="mt-8 text-center text-xs text-muted-foreground">
-        © {new Date().getFullYear()} Prodigi. Internal use only.
+        © {now?.getFullYear() ?? ""} Prodigi. Internal use only.
       </p>
     </>
   );

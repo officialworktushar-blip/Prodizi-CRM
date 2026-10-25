@@ -66,6 +66,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useNow } from "@/hooks/use-now";
 import { useRole } from "@/hooks/use-role";
 import {
   ROLE_LABELS,
@@ -109,6 +110,7 @@ type TaskRowProps = {
   onDelete: (task: Task) => void;
   onStatusChange: (task: Task, status: TaskStatus) => void;
   pendingStatus: boolean;
+  today: string;
 };
 
 function TaskStatusSelect({
@@ -150,8 +152,9 @@ function TaskRow({
   onDelete,
   onStatusChange,
   pendingStatus,
+  today,
 }: TaskRowProps) {
-  const overdue = isTaskOverdue(task);
+  const overdue = isTaskOverdue(task, today);
 
   return (
     <TableRow className={cn(overdue && "bg-brand-red/5")}>
@@ -250,17 +253,18 @@ export default function TasksPage() {
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Task | null>(null);
   const [completionTask, setCompletionTask] = useState<Task | null>(null);
-  const today = todayISO();
-  const { weekStart, weekEnd } = useMemo(
-    () => ({
+  const now = useNow();
+  const today = now ? todayISO(now) : "";
+  const { weekStart, weekEnd } = useMemo(() => {
+    if (!now) return { weekStart: "", weekEnd: "" };
+    return {
       weekStart: format(
-        startOfWeek(new Date(), { weekStartsOn: 1 }),
+        startOfWeek(now, { weekStartsOn: 1 }),
         "yyyy-MM-dd",
       ),
-      weekEnd: format(endOfWeek(new Date(), { weekStartsOn: 1 }), "yyyy-MM-dd"),
-    }),
-    [],
-  );
+      weekEnd: format(endOfWeek(now, { weekStartsOn: 1 }), "yyyy-MM-dd"),
+    };
+  }, [now]);
   const tasksQueryKey = ["tasks", profile?.id, role] as const;
 
   const tasksQuery = useQuery({
@@ -483,7 +487,7 @@ export default function TasksPage() {
         return false;
       }
 
-      if (dueFilter === "overdue" && !isTaskOverdue(task)) return false;
+      if (dueFilter === "overdue" && !isTaskOverdue(task, today)) return false;
       if (dueFilter === "today" && task.due_date !== today) return false;
       if (
         dueFilter === "week" &&
@@ -544,9 +548,11 @@ export default function TasksPage() {
       task.status !== "completed" &&
       task.status !== "cancelled",
   ).length;
-  const overdueCount = tasks.filter(isTaskOverdue).length;
+  const overdueCount = tasks.filter((task) =>
+    isTaskOverdue(task, today),
+  ).length;
 
-  if (roleLoading) {
+  if (roleLoading || !now) {
     return (
       <div className="space-y-4">
         <Skeleton className="h-10 w-64" />
@@ -658,6 +664,7 @@ export default function TasksPage() {
             onDelete={setDeleteTarget}
             onStatusChange={requestStatusChange}
             pendingStatus={statusMutation.isPending}
+            today={today}
           />
           {statusFilter === "all" && counts.cancelled > 0 ? (
             <p className="text-xs text-muted-foreground">
@@ -719,6 +726,7 @@ export default function TasksPage() {
                 onDelete={setDeleteTarget}
                 onStatusChange={requestStatusChange}
                 pendingStatus={statusMutation.isPending}
+                today={today}
               />
             ))}
           </TableBody>
