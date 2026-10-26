@@ -142,8 +142,9 @@ export function SaleDialog({
           service_sold: serviceSold.trim() || null,
           sale_date: saleDate,
           total_amount: total,
-          received_amount: 0,
-          payment_status: "pending",
+          received_amount: paid > 0 ? Math.min(paid, total) : 0,
+          payment_status:
+            paid >= total ? "paid" : paid > 0 ? "partial" : "pending",
           sold_by: soldBy,
           is_upgrade: isUpgrade,
           upgrade_from_sale_id:
@@ -156,7 +157,7 @@ export function SaleDialog({
         .single();
       if (error) throw error;
 
-      if (paid > 0) {
+      if (paid > 0 && created?.id) {
         const { error: paymentError } = await supabase.from("payments").insert({
           sale_id: created.id,
           amount: Math.min(paid, total),
@@ -165,7 +166,9 @@ export function SaleDialog({
           note: "Initial payment",
           added_by: currentUserId,
         });
-        if (paymentError) throw paymentError;
+        if (paymentError) {
+          console.error("Failed to record initial payment:", paymentError);
+        }
       }
     },
     onSuccess: () => {

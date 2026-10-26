@@ -20,6 +20,11 @@ export const metadata: Metadata = {
   description:
     "Prodigi CRM — leads, tasks, sales, team targets and salary in one place.",
   applicationName: "Prodigi CRM",
+  icons: {
+    icon: "/logo.png",
+    shortcut: "/logo.png",
+    apple: "/logo.png",
+  },
 };
 
 export const viewport: Viewport = {
