@@ -119,7 +119,6 @@ export function SaleDialog({
             service_sold: serviceSold.trim() || null,
             sale_date: saleDate,
             total_amount: total,
-            remaining_amount: remaining,
             payment_status:
               remaining <= 0 ? "paid" : received > 0 ? "partial" : "pending",
             sold_by: soldBy,
@@ -144,7 +143,6 @@ export function SaleDialog({
           sale_date: saleDate,
           total_amount: total,
           received_amount: 0,
-          remaining_amount: total,
           payment_status: "pending",
           sold_by: soldBy,
           is_upgrade: isUpgrade,
